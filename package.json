@@ -2,7 +2,7 @@
   "name": "gemini-interview-questions-generator",
   "version": "1.0.0",
   "description": "Generate interview questions using Gemini AI",
-  "main": "main.js",
+  "main": "src/main.js",
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
