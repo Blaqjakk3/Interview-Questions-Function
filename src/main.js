@@ -1,4 +1,4 @@
-import { Client, Databases } from 'node-appwrite';
+import { Client, Databases, Query } from 'node-appwrite';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const client = new Client();
@@ -49,16 +49,20 @@ export default async ({ req, res, log, error }) => {
       }, 400);
     }
 
-    // Fetch talent information
+    log(`Looking for talent with talentId: ${talentId}`);
+
+    // Fetch talent information - FIXED QUERY
     let talent;
     try {
       const talentQuery = await databases.listDocuments(
         config.databaseId,
         config.talentsCollectionId,
         [
-          { method: 'equal', attribute: 'talentId', values: [talentId] }
+          Query.equal('talentId', talentId)
         ]
       );
+
+      log(`Query result: Found ${talentQuery.documents.length} documents`);
 
       if (talentQuery.documents.length === 0) {
         throw new Error('Talent not found');
