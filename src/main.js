@@ -52,11 +52,19 @@ export default async ({ req, res, log, error }) => {
     // Fetch talent information
     let talent;
     try {
-      talent = await databases.getDocument(
+      const talentQuery = await databases.listDocuments(
         config.databaseId,
         config.talentsCollectionId,
-        talentId
+        [
+          { method: 'equal', attribute: 'talentId', values: [talentId] }
+        ]
       );
+
+      if (talentQuery.documents.length === 0) {
+        throw new Error('Talent not found');
+      }
+
+      talent = talentQuery.documents[0];
       log(`Fetched talent: ${talent.fullname}`);
     } catch (e) {
       error(`Failed to fetch talent: ${e.message}`);
@@ -67,24 +75,19 @@ export default async ({ req, res, log, error }) => {
       }, 404);
     }
 
-    // Fetch career path information
-    let careerPath;
-    try {
-      if (talent.selectedPath) {
+    // Fetch career path if selectedPath exists
+    let careerPath = null;
+    if (talent.selectedPath) {
+      try {
         careerPath = await databases.getDocument(
           config.databaseId,
           config.careerPathsCollectionId,
           talent.selectedPath
         );
         log(`Fetched career path: ${careerPath.title}`);
+      } catch (e) {
+        log(`Warning: Could not fetch career path ${talent.selectedPath}: ${e.message}`);
       }
-    } catch (e) {
-      error(`Failed to fetch career path: ${e.message}`);
-      return res.json({
-        success: false,
-        error: 'Career path not found',
-        statusCode: 404
-      }, 404);
     }
 
     // Initialize Gemini
@@ -97,37 +100,41 @@ export default async ({ req, res, log, error }) => {
         }
       });
 
-      // Create detailed prompt based on career stage and path
+      // Build context for career stage
       const careerStageContext = {
-        'Pathfinder': 'entry-level candidate who is just starting their career journey and looking for internships or junior positions',
-        'Trailblazer': 'mid-level professional looking to advance their career and move up the ladder in their field',
-        'Horizon Changer': 'experienced professional from another field looking to transition into a new career path'
+        'Pathfinder': 'entry-level professional looking to start their career, focusing on internships and entry-level positions',
+        'Trailblazer': 'mid-level professional looking to advance and grow in their current field',
+        'Horizon Changer': 'experienced professional looking to transition to a new career field'
       };
 
-      const prompt = `Generate 25 mock interview questions and answers for a ${talent.careerStage} in ${careerPath ? careerPath.title : 'their chosen field'}.
+      const careerStageDescription = careerStageContext[talent.careerStage] || 'professional';
+      const careerPathTitle = careerPath ? careerPath.title : 'general career field';
+      const careerPathDescription = careerPath ? careerPath.description || '' : '';
+
+      const prompt = `Generate 25-30 mock interview questions and answers for a ${careerStageDescription} interested in ${careerPathTitle}.
 
 Context:
-- Career Stage: ${talent.careerStage} (${careerStageContext[talent.careerStage]})
-- Career Path: ${careerPath ? careerPath.title : 'General'}
-- Skills: ${talent.skills ? talent.skills.join(', ') : 'General skills'}
-- Interests: ${talent.interests ? talent.interests.join(', ') : 'General interests'}
+- Career Stage: ${talent.careerStage} (${careerStageDescription})
+- Career Path: ${careerPathTitle}
+- Career Path Description: ${careerPathDescription}
 
-Requirements:
-1. Include 10-12 general behavioral/situational questions applicable to most professional roles
-2. Include 13-15 questions specifically tailored to the ${careerPath ? careerPath.title : 'chosen career path'}
-3. Adjust question difficulty and expectations based on the ${talent.careerStage} career stage
-4. Provide comprehensive, realistic answers that would be appropriate for someone at this career stage
-5. For Pathfinder: Focus on potential, willingness to learn, and relevant coursework/projects
-6. For Trailblazer: Focus on experience, leadership, and career growth
-7. For Horizon Changer: Focus on transferable skills, motivation for change, and relevant experience from previous field
+Include a mix of:
+1. 10-12 General behavioral and situational questions (applicable to most roles)
+2. 15-18 Questions tailored specifically to the ${careerPathTitle} field
 
-Return only valid JSON array with objects containing:
+For each question, provide:
 - question: The interview question
-- answer: A comprehensive sample answer (2-3 sentences minimum)
-- category: Either "behavioral" or "technical" or "career-specific"
-- difficulty: "easy", "medium", or "hard"
+- type: Either "general" or "career-specific"
+- category: Question category (e.g., "behavioral", "technical", "situational", "career-motivation")
+- answer: A comprehensive sample answer tailored to the career stage
+- tips: 2-3 specific tips for answering this question effectively
 
-Format: JSON array only, no extra text or markdown.`;
+Tailor the complexity and expectations in answers based on the career stage:
+- Pathfinder: Focus on potential, learning attitude, internship experiences, academic projects
+- Trailblazer: Focus on concrete achievements, leadership examples, career progression
+- Horizon Changer: Focus on transferable skills, motivation for change, relevant experience
+
+Return only valid JSON array with objects containing the specified fields. No extra text or markdown.`;
 
       // Generate content
       log('Generating interview questions with Gemini...');
@@ -144,6 +151,18 @@ Format: JSON array only, no extra text or markdown.`;
         if (!Array.isArray(questions) || questions.length === 0) {
           throw new Error('Empty questions array');
         }
+
+        // Validate question structure
+        questions = questions.map((q, index) => ({
+          id: index + 1,
+          question: q.question || `Sample question ${index + 1}`,
+          type: q.type || 'general',
+          category: q.category || 'behavioral',
+          answer: q.answer || 'Sample answer for interview preparation.',
+          tips: Array.isArray(q.tips) ? q.tips : ['Practice your response', 'Be specific with examples'],
+          ...q
+        }));
+
       } catch (parseError) {
         error(`Failed to parse questions: ${parseError.message}`);
         return res.json({
@@ -158,25 +177,20 @@ Format: JSON array only, no extra text or markdown.`;
       const response = {
         success: true,
         statusCode: 200,
-        questions: questions.map(q => ({
-          question: q.question || 'Sample interview question',
-          answer: q.answer || 'Sample answer for the question',
-          category: q.category || 'behavioral',
-          difficulty: q.difficulty || 'medium',
-          ...q
-        })),
-        talent: {
-          id: talent.$id,
-          fullname: talent.fullname,
-          careerStage: talent.careerStage
-        },
-        careerPath: careerPath ? {
-          id: careerPath.$id,
-          title: careerPath.title
-        } : null,
+        questions: questions,
         metadata: {
           totalQuestions: questions.length,
-          careerStage: talent.careerStage,
+          generalQuestions: questions.filter(q => q.type === 'general').length,
+          careerSpecificQuestions: questions.filter(q => q.type === 'career-specific').length,
+          talent: {
+            id: talent.$id,
+            fullname: talent.fullname,
+            careerStage: talent.careerStage
+          },
+          careerPath: careerPath ? {
+            id: careerPath.$id,
+            title: careerPath.title
+          } : null,
           generatedAt: new Date().toISOString()
         }
       };
