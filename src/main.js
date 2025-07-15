@@ -151,21 +151,23 @@ CRITICAL: You must return ONLY a valid JSON array in this exact format:
 [
   {
     "question": "Your first question here?",
-    "answer": "Brief 2-3 sentence answer explaining how to approach this question.",
-    "tips": ["Specific tip 1", "Specific tip 2", "Specific tip 3"]
+    "answer": "A complete sample answer that ${talent.fullname} can use as a reference during the interview. This should be a realistic, professional response that demonstrates good interview technique and relates to their profile as a ${careerStageDescription} in ${careerPathTitle}. Make it 3-4 sentences long and include specific examples or details where appropriate.",
+    "tips": ["Specific actionable tip 1 for answering this question", "Specific actionable tip 2 for answering this question", "Specific actionable tip 3 for answering this question"]
   },
   {
     "question": "Your second question here?",
-    "answer": "Brief 2-3 sentence answer explaining how to approach this question.",
-    "tips": ["Specific tip 1", "Specific tip 2", "Specific tip 3"]
+    "answer": "A complete sample answer that ${talent.fullname} can use as a reference during the interview. This should be a realistic, professional response that demonstrates good interview technique and relates to their profile as a ${careerStageDescription} in ${careerPathTitle}. Make it 3-4 sentences long and include specific examples or details where appropriate.",
+    "tips": ["Specific actionable tip 1 for answering this question", "Specific actionable tip 2 for answering this question", "Specific actionable tip 3 for answering this question"]
   }
 ]
 
 REQUIREMENTS:
 - Return EXACTLY 10 question objects
 - Each question must be relevant to ${QUESTION_CATEGORIES[category]}
-- Each answer must be 2-3 sentences maximum
-- Each tips array must contain exactly 3 actionable tips
+- Each "answer" must be a complete sample response that ${talent.fullname} can actually use in an interview setting
+- Sample answers should be 3-4 sentences long and professional
+- Sample answers should relate to their background as a ${careerStageDescription} in ${careerPathTitle}
+- Each tips array must contain exactly 3 actionable tips for answering that specific question
 - Return ONLY the JSON array, no additional text before or after
 - Use proper JSON formatting with double quotes
 - Do not include any markdown formatting or code blocks`;
@@ -201,99 +203,6 @@ async function generateWithTimeout(model, prompt, timeoutMs = 15000) {
         reject(new Error(`AI generation failed: ${err.message}`));
       });
   });
-}
-
-// Fallback questions generator for when AI fails
-function generateFallbackQuestions(category, talent, careerPath) {
-  const careerPathTitle = careerPath ? careerPath.title : 'your chosen field';
-  
-  const fallbackQuestions = {
-    'personal': [
-      {
-        question: "Tell me about yourself and what motivates you in your career.",
-        answer: "Structure your response around your current situation, relevant experiences, and career goals. Focus on what drives your passion for this field.",
-        tips: ["Keep it concise and professional", "Connect your background to the role", "Show enthusiasm for your field"]
-      },
-      {
-        question: "What are your greatest strengths and how do they apply to this role?",
-        answer: "Choose 2-3 key strengths that directly relate to the position. Provide specific examples of how you've demonstrated these strengths.",
-        tips: ["Use concrete examples", "Relate strengths to job requirements", "Avoid generic answers"]
-      },
-      {
-        question: "What is your biggest weakness and how are you working to improve it?",
-        answer: "Choose a real weakness that won't disqualify you. Explain the steps you're taking to address it and show self-awareness.",
-        tips: ["Be authentic but strategic", "Show improvement efforts", "Don't say you have no weaknesses"]
-      }
-    ],
-    'career': [
-      {
-        question: "Where do you see yourself in 5 years?",
-        answer: "Align your goals with the company's growth opportunities. Show ambition while being realistic about career progression.",
-        tips: ["Research company career paths", "Show long-term thinking", "Demonstrate ambition and loyalty"]
-      },
-      {
-        question: "Why did you choose this career path?",
-        answer: "Share your genuine interest in the field. Mention specific experiences or moments that led to this decision.",
-        tips: ["Be authentic and passionate", "Connect to personal experiences", "Show genuine interest in the field"]
-      }
-    ],
-    'company': [
-      {
-        question: "Why do you want to work for this company?",
-        answer: "Research the company's values, culture, and recent achievements. Connect these to your own values and career goals.",
-        tips: ["Research company thoroughly", "Connect to your values", "Mention specific company achievements"]
-      }
-    ],
-    'technical': [
-      {
-        question: `What technical skills are most important for success in ${careerPathTitle}?`,
-        answer: "Discuss both hard and soft technical skills. Mention your proficiency level and how you stay current with technology.",
-        tips: ["Mention specific technologies", "Show continuous learning", "Relate to job requirements"]
-      }
-    ],
-    'behavioral': [
-      {
-        question: "Describe a time when you faced a significant challenge. How did you handle it?",
-        answer: "Use the STAR method: Situation, Task, Action, Result. Focus on your problem-solving process and what you learned.",
-        tips: ["Use the STAR method", "Show problem-solving skills", "Emphasize positive outcomes"]
-      }
-    ],
-    'problem-solving': [
-      {
-        question: "How do you approach solving complex problems?",
-        answer: "Outline your systematic approach: analyze the problem, research solutions, implement, and evaluate results.",
-        tips: ["Show systematic thinking", "Mention analytical tools", "Emphasize learning from results"]
-      }
-    ],
-    'teamwork': [
-      {
-        question: "How do you handle conflicts with team members?",
-        answer: "Emphasize open communication, active listening, and finding common ground. Show maturity in conflict resolution.",
-        tips: ["Show emotional intelligence", "Emphasize communication", "Focus on positive outcomes"]
-      }
-    ]
-  };
-
-  const categoryQuestions = fallbackQuestions[category] || fallbackQuestions['personal'];
-  
-  // Expand to 10 questions by adding variations
-  const expandedQuestions = [...categoryQuestions];
-  
-  // Add generic questions to reach 10
-  while (expandedQuestions.length < 10) {
-    expandedQuestions.push({
-      question: `What interests you most about working in ${careerPathTitle}?`,
-      answer: "Focus on specific aspects of the field that excite you. Show genuine passion and knowledge about the industry.",
-      tips: ["Be specific and passionate", "Show industry knowledge", "Connect to personal interests"]
-    });
-  }
-  
-  return expandedQuestions.slice(0, 10).map((q, index) => ({
-    id: index + 1,
-    question: q.question,
-    answer: q.answer,
-    tips: q.tips
-  }));
 }
 
 export default async ({ req, res, log, error }) => {
@@ -366,17 +275,14 @@ export default async ({ req, res, log, error }) => {
       }
     }
 
-    let questions;
-    let usedFallback = false;
-    
-    // Try AI generation first
+    // Try AI generation
     try {
       // Initialize Gemini 2.5 Flash model with optimized settings
       const model = genAI.getGenerativeModel({ 
         model: "gemini-2.5-flash",
         generationConfig: { 
-          maxOutputTokens: 2000,
-          temperature: 0.3,
+          maxOutputTokens: 3000, // Increased for longer sample answers
+          temperature: 0.4, // Slightly higher for more varied responses
           topK: 40,
           topP: 0.9,
           candidateCount: 1
@@ -386,8 +292,8 @@ export default async ({ req, res, log, error }) => {
       const prompt = getCategoryPrompt(category, talent, careerPath);
       log(`Starting AI generation for ${QUESTION_CATEGORIES[category]} questions (${Date.now() - startTime}ms)`);
       
-      // Try with 15 second timeout
-      const result = await generateWithTimeout(model, prompt, 15000);
+      // Try with 20 second timeout for more complex responses
+      const result = await generateWithTimeout(model, prompt, 20000);
       const responseText = result.response.text();
       
       log(`AI generation completed in ${Date.now() - startTime}ms`);
@@ -400,7 +306,7 @@ export default async ({ req, res, log, error }) => {
         throw new Error('Invalid questions array from AI');
       }
 
-      questions = parsedQuestions.slice(0, 10).map((q, index) => {
+      const questions = parsedQuestions.slice(0, 10).map((q, index) => {
         if (!q.question || !q.answer || !Array.isArray(q.tips)) {
           throw new Error(`Invalid question structure at index ${index}`);
         }
@@ -414,41 +320,42 @@ export default async ({ req, res, log, error }) => {
 
       log(`Successfully processed ${questions.length} AI-generated questions`);
 
+      const response = {
+        success: true,
+        statusCode: 200,
+        questions: questions,
+        metadata: {
+          totalQuestions: questions.length,
+          category: QUESTION_CATEGORIES[category],
+          talent: {
+            id: talent.$id,
+            fullname: talent.fullname,
+            careerStage: talent.careerStage
+          },
+          careerPath: careerPath ? {
+            id: careerPath.$id,
+            title: careerPath.title
+          } : null,
+          generatedAt: new Date().toISOString(),
+          executionTime: Date.now() - startTime,
+          usedFallback: false
+        }
+      };
+
+      log(`Generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms`);
+      return res.json(response);
+
     } catch (aiError) {
       error(`AI generation failed: ${aiError.message}`);
-      log('Falling back to predefined questions...');
       
-      // Use fallback questions
-      questions = generateFallbackQuestions(category, talent, careerPath);
-      usedFallback = true;
-      
-      log(`Using ${questions.length} fallback questions`);
+      // Return error instead of fallback
+      return res.json({
+        success: false,
+        error: `Failed to generate interview questions: ${aiError.message}`,
+        statusCode: 500,
+        executionTime: Date.now() - startTime
+      }, 500);
     }
-
-    const response = {
-      success: true,
-      statusCode: 200,
-      questions: questions,
-      metadata: {
-        totalQuestions: questions.length,
-        category: QUESTION_CATEGORIES[category],
-        talent: {
-          id: talent.$id,
-          fullname: talent.fullname,
-          careerStage: talent.careerStage
-        },
-        careerPath: careerPath ? {
-          id: careerPath.$id,
-          title: careerPath.title
-        } : null,
-        generatedAt: new Date().toISOString(),
-        executionTime: Date.now() - startTime,
-        usedFallback: usedFallback
-      }
-    };
-
-    log(`Generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms (fallback: ${usedFallback})`);
-    return res.json(response);
 
   } catch (err) {
     error(`Unexpected Error: ${err.message}`);
