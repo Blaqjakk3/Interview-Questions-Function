@@ -30,84 +30,24 @@ const QUESTION_CATEGORIES = {
 
 function extractAndCleanJSON(text) {
   try {
-    // First, let's log what we're getting from the AI
-    console.log('Raw AI Response:', text.substring(0, 500) + '...');
-    
-    // Remove markdown code blocks and extra whitespace
     let cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    const startIndex = cleaned.indexOf('[');
+    const lastIndex = cleaned.lastIndexOf(']');
     
-    // Try to find JSON array boundaries more flexibly
-    let startIndex = cleaned.indexOf('[');
-    let lastIndex = cleaned.lastIndexOf(']');
-    
-    // If we can't find array brackets, try to find object brackets and wrap in array
-    if (startIndex === -1 || lastIndex === -1) {
-      console.log('No array brackets found, looking for objects...');
-      
-      // Look for objects that start with { and end with }
-      const objectStart = cleaned.indexOf('{');
-      const objectEnd = cleaned.lastIndexOf('}');
-      
-      if (objectStart !== -1 && objectEnd !== -1) {
-        // Extract the content between braces
-        const objectContent = cleaned.substring(objectStart, objectEnd + 1);
-        
-        // Try to parse as a single object first
-        try {
-          const singleObject = JSON.parse(objectContent);
-          // If it's a valid object, wrap it in an array
-          return JSON.stringify([singleObject]);
-        } catch (e) {
-          console.log('Single object parsing failed, trying to find multiple objects');
-          
-          // Try to find multiple objects and wrap them in an array
-          const objectPattern = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
-          const objects = objectContent.match(objectPattern);
-          
-          if (objects && objects.length > 0) {
-            try {
-              const parsedObjects = objects.map(obj => JSON.parse(obj));
-              return JSON.stringify(parsedObjects);
-            } catch (parseError) {
-              console.log('Multiple objects parsing failed:', parseError);
-            }
-          }
-        }
-      }
-      
-      throw new Error('No valid JSON structure found in response');
+    if (startIndex === -1 || lastIndex === -1 || startIndex >= lastIndex) {
+      throw new Error('No valid JSON array found in response');
     }
     
-    if (startIndex >= lastIndex) {
-      throw new Error('Invalid JSON array structure');
-    }
-    
-    // Extract the JSON array
-    cleaned = cleaned.substring(startIndex, lastIndex + 1);
-    
-    // Clean up common JSON formatting issues
-    cleaned = cleaned
-      .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
-      .replace(/([{,]\s*)(\w+):/g, '$1"$2":') // Quote unquoted keys
-      .replace(/:\s*'([^']*)'/g, ': "$1"') // Convert single quotes to double quotes
-      .replace(/\n/g, ' ') // Remove newlines
-      .replace(/\s+/g, ' ') // Normalize whitespace
+    cleaned = cleaned.substring(startIndex, lastIndex + 1)
+      .replace(/,(\s*[}\]])/g, '$1')
+      .replace(/([{,]\s*)(\w+):/g, '$1"$2":')
+      .replace(/:\s*'([^']*)'/g, ': "$1"')
+      .replace(/\n/g, ' ')
+      .replace(/\s+/g, ' ')
       .trim();
     
-    // Try to parse the cleaned JSON
-    const parsed = JSON.parse(cleaned);
-    
-    // Validate it's an array
-    if (!Array.isArray(parsed)) {
-      throw new Error('Parsed JSON is not an array');
-    }
-    
-    console.log(`Successfully parsed JSON array with ${parsed.length} items`);
-    return JSON.stringify(parsed);
-    
+    return cleaned;
   } catch (error) {
-    console.error('JSON extraction failed:', error.message);
-    console.error('Problematic text:', text.substring(0, 1000));
     throw new Error(`Failed to clean JSON: ${error.message}`);
   }
 }
@@ -122,9 +62,9 @@ function getCategoryPrompt(category, talent, careerPath) {
   const careerPathTitle = careerPath ? careerPath.title : 'their chosen field';
   
   // Optimize talent context - only include most relevant info
-  const skills = (talent.skills || []).slice(0, 5);
-  const degrees = (talent.degrees || []).slice(0, 2);
-  const interests = (talent.interests || []).slice(0, 3);
+  const skills = (talent.skills || []).slice(0, 5); // Limit to top 5 skills
+  const degrees = (talent.degrees || []).slice(0, 2); // Limit to top 2 degrees
+  const interests = (talent.interests || []).slice(0, 3); // Limit to top 3 interests
 
   const talentContext = [
     skills.length > 0 ? `Skills: ${skills.join(', ')}` : '',
@@ -132,75 +72,52 @@ function getCategoryPrompt(category, talent, careerPath) {
     interests.length > 0 ? `Interests: ${interests.join(', ')}` : ''
   ].filter(Boolean).join('. ');
 
+  // Shortened, more focused prompts for faster generation
   const categoryPrompts = {
-    'personal': `Generate exactly 10 personal background questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on motivation, strengths, challenges.`,
-    'career': `Generate exactly 10 career goals questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on plans, ambitions, choices.`,
-    'company': `Generate exactly 10 company/role fit questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on why this company/role.`,
-    'technical': `Generate exactly 10 technical questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on relevant skills and knowledge.`,
-    'behavioral': `Generate exactly 10 STAR format behavioral questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on past experiences.`,
-    'problem-solving': `Generate exactly 10 problem-solving questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on approach to challenges.`,
-    'teamwork': `Generate exactly 10 teamwork questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on collaboration and communication.`
+    'personal': `Generate 10 personal background questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on motivation, strengths, challenges.`,
+    'career': `Generate 10 career goals questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on plans, ambitions, choices.`,
+    'company': `Generate 10 company/role fit questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on why this company/role.`,
+    'technical': `Generate 10 technical questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on relevant skills and knowledge.`,
+    'behavioral': `Generate 10 STAR format behavioral questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on past experiences.`,
+    'problem-solving': `Generate 10 problem-solving questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on approach to challenges.`,
+    'teamwork': `Generate 10 teamwork questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on collaboration and communication.`
   };
 
   return `${categoryPrompts[category]}
 
 ${talentContext ? `Profile: ${talentContext}` : ''}
 
-CRITICAL: You must return ONLY a valid JSON array in this exact format:
-
+Return ONLY this JSON format:
 [
   {
-    "question": "Your first question here?",
-    "answer": "A complete sample answer that ${talent.fullname} can use as a reference during the interview. This should be a realistic, professional response that demonstrates good interview technique and relates to their profile as a ${careerStageDescription} in ${careerPathTitle}. Make it 3-4 sentences long and include specific examples or details where appropriate.",
-    "tips": ["Specific actionable tip 1 for answering this question", "Specific actionable tip 2 for answering this question", "Specific actionable tip 3 for answering this question"]
-  },
-  {
-    "question": "Your second question here?",
-    "answer": "A complete sample answer that ${talent.fullname} can use as a reference during the interview. This should be a realistic, professional response that demonstrates good interview technique and relates to their profile as a ${careerStageDescription} in ${careerPathTitle}. Make it 3-4 sentences long and include specific examples or details where appropriate.",
-    "tips": ["Specific actionable tip 1 for answering this question", "Specific actionable tip 2 for answering this question", "Specific actionable tip 3 for answering this question"]
+    "question": "Question text",
+    "answer": "Brief 2-3 sentence answer",
+    "tips": ["Tip 1", "Tip 2", "Tip 3"]
   }
 ]
 
-REQUIREMENTS:
-- Return EXACTLY 10 question objects
-- Each question must be relevant to ${QUESTION_CATEGORIES[category]}
-- Each "answer" must be a complete sample response that ${talent.fullname} can actually use in an interview setting
-- Sample answers should be 3-4 sentences long and professional
-- Sample answers should relate to their background as a ${careerStageDescription} in ${careerPathTitle}
-- Each tips array must contain exactly 3 actionable tips for answering that specific question
-- Return ONLY the JSON array, no additional text before or after
-- Use proper JSON formatting with double quotes
-- Do not include any markdown formatting or code blocks`;
+Requirements:
+- Exactly 10 questions for ${QUESTION_CATEGORIES[category]}
+- Answers: 2-3 sentences, natural tone
+- Tips: 3 specific, actionable tips each
+- Valid JSON only, no extra text`;
 }
 
-// Enhanced timeout wrapper with better error handling
-async function generateWithTimeout(model, prompt, timeoutMs = 15000) {
+// Aggressive timeout wrapper - must complete before Appwrite timeout
+async function generateWithTimeout(model, prompt, timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error('AI generation timeout - request took too long'));
+      reject(new Error('AI generation timeout'));
     }, timeoutMs);
 
     model.generateContent(prompt)
       .then(result => {
         clearTimeout(timer);
-        
-        if (!result || !result.response) {
-          reject(new Error('Empty response from AI model'));
-          return;
-        }
-        
-        const responseText = result.response.text();
-        if (!responseText || responseText.trim() === '') {
-          reject(new Error('Empty response text from AI model'));
-          return;
-        }
-        
         resolve(result);
       })
       .catch(err => {
         clearTimeout(timer);
-        console.error('AI generation error:', err);
-        reject(new Error(`AI generation failed: ${err.message}`));
+        reject(err);
       });
   });
 }
@@ -232,7 +149,7 @@ export default async ({ req, res, log, error }) => {
       }, 400);
     }
 
-    // Fetch talent information
+    // Fetch talent information with timeout check
     let talent;
     try {
       const talentQuery = await databases.listDocuments(
@@ -251,7 +168,7 @@ export default async ({ req, res, log, error }) => {
       return res.json({ success: false, error: 'Talent not found', statusCode: 404 }, 404);
     }
 
-    // Quick timeout check
+    // Quick timeout check - abort if we're already past 3 seconds
     if (Date.now() - startTime > 3000) {
       return res.json({ 
         success: false, 
@@ -260,7 +177,7 @@ export default async ({ req, res, log, error }) => {
       }, 408);
     }
 
-    // Fetch career path
+    // Fetch career path (with minimal timeout)
     let careerPath = null;
     if (talent.selectedPath) {
       try {
@@ -275,29 +192,30 @@ export default async ({ req, res, log, error }) => {
       }
     }
 
-    // Try AI generation
-    try {
-      // Initialize Gemini 2.5 Flash model with optimized settings
-      const model = genAI.getGenerativeModel({ 
-        model: "gemini-2.5-flash",
-        generationConfig: { 
-          maxOutputTokens: 3000, // Increased for longer sample answers
-          temperature: 0.4, // Slightly higher for more varied responses
-          topK: 40,
-          topP: 0.9,
-          candidateCount: 1
-        }
-      });
+    let questions;
+    
+    // Initialize Gemini 2.5 Flash model with MAXIMUM performance settings
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-2.5-flash",
+      generationConfig: { 
+        maxOutputTokens: 1500, // Reduced significantly for faster generation
+        temperature: 0.4, // Lower for more predictable output
+        topK: 20, // Reduced for faster processing
+        topP: 0.8, // Reduced for faster processing
+        candidateCount: 1,
+        stopSequences: ["\n\n\n"] // Help stop generation early
+      }
+    });
 
+    try {
       const prompt = getCategoryPrompt(category, talent, careerPath);
       log(`Starting AI generation for ${QUESTION_CATEGORIES[category]} questions (${Date.now() - startTime}ms)`);
       
-      // Try with 20 second timeout for more complex responses
-      const result = await generateWithTimeout(model, prompt, 20000);
+      // Critical: Only 12 seconds for AI generation (function has ~15s total)
+      const result = await generateWithTimeout(model, prompt, 12000);
       const responseText = result.response.text();
       
       log(`AI generation completed in ${Date.now() - startTime}ms`);
-      log(`Response length: ${responseText.length} characters`);
       
       const cleanedJson = extractAndCleanJSON(responseText);
       const parsedQuestions = JSON.parse(cleanedJson);
@@ -306,7 +224,7 @@ export default async ({ req, res, log, error }) => {
         throw new Error('Invalid questions array from AI');
       }
 
-      const questions = parsedQuestions.slice(0, 10).map((q, index) => {
+      questions = parsedQuestions.slice(0, 10).map((q, index) => {
         if (!q.question || !q.answer || !Array.isArray(q.tips)) {
           throw new Error(`Invalid question structure at index ${index}`);
         }
@@ -318,44 +236,51 @@ export default async ({ req, res, log, error }) => {
         };
       });
 
-      log(`Successfully processed ${questions.length} AI-generated questions`);
-
-      const response = {
-        success: true,
-        statusCode: 200,
-        questions: questions,
-        metadata: {
-          totalQuestions: questions.length,
-          category: QUESTION_CATEGORIES[category],
-          talent: {
-            id: talent.$id,
-            fullname: talent.fullname,
-            careerStage: talent.careerStage
-          },
-          careerPath: careerPath ? {
-            id: careerPath.$id,
-            title: careerPath.title
-          } : null,
-          generatedAt: new Date().toISOString(),
-          executionTime: Date.now() - startTime,
-          usedFallback: false
-        }
-      };
-
-      log(`Generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms`);
-      return res.json(response);
+      log(`Successfully processed ${questions.length} ${QUESTION_CATEGORIES[category]} questions with tips`);
 
     } catch (aiError) {
       error(`AI generation failed: ${aiError.message}`);
       
-      // Return error instead of fallback
-      return res.json({
-        success: false,
-        error: `Failed to generate interview questions: ${aiError.message}`,
-        statusCode: 500,
-        executionTime: Date.now() - startTime
+      // Check if it's a timeout error
+      if (aiError.message.includes('timeout')) {
+        return res.json({ 
+          success: false, 
+          error: 'Request timeout - please try again', 
+          statusCode: 408 
+        }, 408);
+      }
+      
+      return res.json({ 
+        success: false, 
+        error: 'Failed to generate questions', 
+        statusCode: 500 
       }, 500);
     }
+
+    const response = {
+      success: true,
+      statusCode: 200,
+      questions: questions,
+      metadata: {
+        totalQuestions: questions.length,
+        category: QUESTION_CATEGORIES[category],
+        talent: {
+          id: talent.$id,
+          fullname: talent.fullname,
+          careerStage: talent.careerStage
+        },
+        careerPath: careerPath ? {
+          id: careerPath.$id,
+          title: careerPath.title
+        } : null,
+        generatedAt: new Date().toISOString(),
+        executionTime: Date.now() - startTime,
+        usedFallback: false
+      }
+    };
+
+    log(`Generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms`);
+    return res.json(response);
 
   } catch (err) {
     error(`Unexpected Error: ${err.message}`);
