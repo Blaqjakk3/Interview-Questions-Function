@@ -107,6 +107,25 @@ Requirements:
 - Return valid JSON only, no extra text`;
 }
 
+// Timeout wrapper for AI generation
+async function generateWithTimeout(model, prompt, timeoutMs = 25000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('AI generation timeout'));
+    }, timeoutMs);
+
+    model.generateContent(prompt)
+      .then(result => {
+        clearTimeout(timer);
+        resolve(result);
+      })
+      .catch(err => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
 export default async ({ req, res, log, error }) => {
   const startTime = Date.now();
   
@@ -169,15 +188,28 @@ export default async ({ req, res, log, error }) => {
     }
 
     let questions;
+    
+    // Initialize Gemini 2.5 Flash model with optimized configuration
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      generationConfig: { maxOutputTokens: 3000, temperature: 0.7 }
+      model: "gemini-2.5-flash", // Updated to Gemini 2.5 Flash
+      generationConfig: { 
+        maxOutputTokens: 2500, // Reduced from 3000 for faster generation
+        temperature: 0.6, // Slightly reduced for more consistent output
+        topK: 32, // Added for better performance
+        topP: 0.9, // Added for better performance
+        candidateCount: 1 // Ensure single response
+      }
     });
 
     try {
       const prompt = getCategoryPrompt(category, talent, careerPath);
-      const result = await model.generateContent(prompt);
+      log(`Starting AI generation for ${QUESTION_CATEGORIES[category]} questions`);
+      
+      // Use timeout wrapper to prevent function timeout
+      const result = await generateWithTimeout(model, prompt, 25000); // 25 second timeout
       const responseText = result.response.text();
+      
+      log(`AI generation completed in ${Date.now() - startTime}ms`);
       
       const cleanedJson = extractAndCleanJSON(responseText);
       const parsedQuestions = JSON.parse(cleanedJson);
@@ -202,6 +234,16 @@ export default async ({ req, res, log, error }) => {
 
     } catch (aiError) {
       error(`AI generation failed: ${aiError.message}`);
+      
+      // Check if it's a timeout error
+      if (aiError.message.includes('timeout')) {
+        return res.json({ 
+          success: false, 
+          error: 'Request timeout - please try again', 
+          statusCode: 408 
+        }, 408);
+      }
+      
       return res.json({ 
         success: false, 
         error: 'Failed to generate questions', 
@@ -226,7 +268,8 @@ export default async ({ req, res, log, error }) => {
           title: careerPath.title
         } : null,
         generatedAt: new Date().toISOString(),
-        executionTime: Date.now() - startTime
+        executionTime: Date.now() - startTime,
+        usedFallback: false // New field to track model usage
       }
     };
 
