@@ -86,11 +86,11 @@ function getCategoryPrompt(category, talent, careerPath) {
 
 ${talentContext ? `Talent Profile: ${talentContext}` : ''}
 
-Return ONLY valid JSON array:
+IMPORTANT: Keep responses concise and focused. Return ONLY valid JSON array with exactly 10 questions:
 [
   {
     "question": "Sample question...",
-    "answer": "Personalized answer incorporating their background and skills...",
+    "answer": "Brief, focused answer (2-3 sentences max)...",
     "tips": [
       "Specific actionable tip 1",
       "Specific actionable tip 2", 
@@ -101,10 +101,79 @@ Return ONLY valid JSON array:
 
 Requirements:
 - Include only ${QUESTION_CATEGORIES[category]} type questions
-- Answers should be 2-4 sentences, natural and conversational
+- Answers must be 2-3 sentences maximum, natural and conversational
 - Tips must be specific, actionable advice (not generic)
-- Incorporate their skills, education, and interests where relevant
-- Return valid JSON only, no extra text`;
+- Keep responses focused and concise
+- Return valid JSON only, no extra text or explanations`;
+}
+
+// Enhanced AI generation with better error handling and retry logic
+async function generateQuestionsWithRetry(category, talent, careerPath, maxRetries = 3) {
+  const model = genAI.getGenerativeModel({ 
+    model: "gemini-2.5-flash",
+    generationConfig: { 
+      maxOutputTokens: 2500, // Reduced from 3000 to speed up response
+      temperature: 0.7,
+      topP: 0.8,
+      topK: 40
+    }
+  });
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const prompt = getCategoryPrompt(category, talent, careerPath);
+      
+      // Add timeout to the AI request
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('AI generation timeout')), 25000); // 25 second timeout
+      });
+      
+      const generationPromise = model.generateContent(prompt);
+      const result = await Promise.race([generationPromise, timeoutPromise]);
+      
+      const responseText = result.response.text();
+      
+      if (!responseText || responseText.trim().length === 0) {
+        throw new Error('Empty response from AI');
+      }
+      
+      const cleanedJson = extractAndCleanJSON(responseText);
+      const parsedQuestions = JSON.parse(cleanedJson);
+      
+      if (!Array.isArray(parsedQuestions) || parsedQuestions.length === 0) {
+        throw new Error('Invalid questions array from AI');
+      }
+
+      const questions = parsedQuestions.slice(0, 10).map((q, index) => {
+        if (!q.question || !q.answer || !Array.isArray(q.tips)) {
+          throw new Error(`Invalid question structure at index ${index}`);
+        }
+        return {
+          id: index + 1,
+          question: q.question.trim(),
+          answer: q.answer.trim(),
+          tips: q.tips.slice(0, 3).map(tip => tip.trim())
+        };
+      });
+
+      return questions;
+
+    } catch (error) {
+      console.log(`AI generation attempt ${attempt} failed:`, error.message);
+      
+      if (attempt === maxRetries) {
+        throw error;
+      }
+      
+      // Exponential backoff with jitter
+      const baseDelay = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
+      const jitter = Math.random() * 1000;
+      const delay = baseDelay + jitter;
+      
+      console.log(`Retrying in ${Math.round(delay)}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
 }
 
 export default async ({ req, res, log, error }) => {
@@ -113,19 +182,28 @@ export default async ({ req, res, log, error }) => {
   try {
     log('=== Interview Questions Function Started ===');
     
+    // Early timeout check
+    const FUNCTION_TIMEOUT = 50000; // 50 seconds
+    const timeoutWarning = setTimeout(() => {
+      log('WARNING: Function approaching timeout limit');
+    }, FUNCTION_TIMEOUT - 10000);
+    
     let requestData;
     try {
       requestData = JSON.parse(req.body);
     } catch (e) {
+      clearTimeout(timeoutWarning);
       return res.json({ success: false, error: 'Invalid JSON input', statusCode: 400 }, 400);
     }
 
     const { talentId, category } = requestData;
     if (!talentId) {
+      clearTimeout(timeoutWarning);
       return res.json({ success: false, error: 'Missing talentId parameter', statusCode: 400 }, 400);
     }
 
     if (!category || !QUESTION_CATEGORIES[category]) {
+      clearTimeout(timeoutWarning);
       return res.json({ 
         success: false, 
         error: 'Invalid or missing category parameter', 
@@ -134,9 +212,10 @@ export default async ({ req, res, log, error }) => {
       }, 400);
     }
 
-    // Fetch talent information
+    // Fetch talent information with timeout
     let talent;
     try {
+      log('Fetching talent information...');
       const talentQuery = await databases.listDocuments(
         config.databaseId,
         config.talentsCollectionId,
@@ -150,13 +229,16 @@ export default async ({ req, res, log, error }) => {
       talent = talentQuery.documents[0];
       log(`Fetched talent: ${talent.fullname}`);
     } catch (e) {
+      clearTimeout(timeoutWarning);
+      log(`Talent fetch error: ${e.message}`);
       return res.json({ success: false, error: 'Talent not found', statusCode: 404 }, 404);
     }
 
-    // Fetch career path
+    // Fetch career path (optional, don't fail if not found)
     let careerPath = null;
     if (talent.selectedPath) {
       try {
+        log('Fetching career path...');
         careerPath = await databases.getDocument(
           config.databaseId,
           config.careerPathsCollectionId,
@@ -168,46 +250,53 @@ export default async ({ req, res, log, error }) => {
       }
     }
 
-    let questions;
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash",
-      generationConfig: { maxOutputTokens: 3000, temperature: 0.7 }
-    });
-
-    try {
-      const prompt = getCategoryPrompt(category, talent, careerPath);
-      const result = await model.generateContent(prompt);
-      const responseText = result.response.text();
-      
-      const cleanedJson = extractAndCleanJSON(responseText);
-      const parsedQuestions = JSON.parse(cleanedJson);
-      
-      if (!Array.isArray(parsedQuestions) || parsedQuestions.length === 0) {
-        throw new Error('Invalid questions array from AI');
-      }
-
-      questions = parsedQuestions.slice(0, 10).map((q, index) => {
-        if (!q.question || !q.answer || !Array.isArray(q.tips)) {
-          throw new Error(`Invalid question structure at index ${index}`);
-        }
-        return {
-          id: index + 1,
-          question: q.question.trim(),
-          answer: q.answer.trim(),
-          tips: q.tips.slice(0, 3).map(tip => tip.trim())
-        };
-      });
-
-      log(`Successfully processed ${questions.length} ${QUESTION_CATEGORIES[category]} questions with tips`);
-
-    } catch (aiError) {
-      error(`AI generation failed: ${aiError.message}`);
+    // Check remaining time before AI generation
+    const elapsedTime = Date.now() - startTime;
+    const remainingTime = FUNCTION_TIMEOUT - elapsedTime;
+    
+    if (remainingTime < 30000) { // Less than 30 seconds remaining
+      clearTimeout(timeoutWarning);
+      log('Insufficient time remaining for AI generation');
       return res.json({ 
         success: false, 
-        error: 'Failed to generate questions', 
-        statusCode: 500 
-      }, 500);
+        error: 'Function timeout risk - insufficient time for AI generation', 
+        statusCode: 408 
+      }, 408);
     }
+
+    // Generate questions with enhanced error handling
+    let questions;
+    try {
+      log('Starting AI generation...');
+      questions = await generateQuestionsWithRetry(category, talent, careerPath);
+      log(`Successfully generated ${questions.length} questions`);
+    } catch (aiError) {
+      clearTimeout(timeoutWarning);
+      error(`AI generation failed: ${aiError.message}`);
+      
+      // Return more specific error based on the type of failure
+      if (aiError.message.includes('timeout')) {
+        return res.json({ 
+          success: false, 
+          error: 'AI generation timeout - please try again', 
+          statusCode: 408 
+        }, 408);
+      } else if (aiError.message.includes('quota') || aiError.message.includes('rate limit')) {
+        return res.json({ 
+          success: false, 
+          error: 'AI service temporarily unavailable - please try again later', 
+          statusCode: 503 
+        }, 503);
+      } else {
+        return res.json({ 
+          success: false, 
+          error: 'Failed to generate questions - please try again', 
+          statusCode: 500 
+        }, 500);
+      }
+    }
+
+    clearTimeout(timeoutWarning);
 
     const response = {
       success: true,
@@ -230,7 +319,7 @@ export default async ({ req, res, log, error }) => {
       }
     };
 
-    log(`Generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms`);
+    log(`Successfully generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms`);
     return res.json(response);
 
   } catch (err) {
