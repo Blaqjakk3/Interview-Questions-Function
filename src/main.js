@@ -86,25 +86,14 @@ function getCategoryPrompt(category, talent, careerPath) {
 
 ${talentContext ? `Talent Profile: ${talentContext}` : ''}
 
-IMPORTANT: Keep responses concise and focused. Return ONLY valid JSON array with exactly 10 questions:
+IMPORTANT: Return ONLY valid JSON array with exactly 10 questions in this format:
 [
   {
-    "question": "Sample question...",
-    "answer": "Brief, focused answer (2-3 sentences max)...",
-    "tips": [
-      "Specific actionable tip 1",
-      "Specific actionable tip 2", 
-      "Specific actionable tip 3"
-    ]
+    "question": "...",
+    "answer": "...",
+    "tips": ["...", "...", "..."]
   }
-]
-
-Requirements:
-- Include only ${QUESTION_CATEGORIES[category]} type questions
-- Answers must be 2-3 sentences maximum, natural and conversational
-- Tips must be specific, actionable advice (not generic)
-- Keep responses focused and concise
-- Return valid JSON only, no extra text or explanations`;
+]`;
 }
 
 // Enhanced AI generation with better error handling and retry logic
@@ -112,10 +101,10 @@ async function generateQuestionsWithRetry(category, talent, careerPath, maxRetri
   const model = genAI.getGenerativeModel({ 
     model: "gemini-2.5-flash",
     generationConfig: { 
-      maxOutputTokens: 2500, // Reduced from 3000 to speed up response
-      temperature: 0.7,
-      topP: 0.8,
-      topK: 40
+      maxOutputTokens: 2000, 
+      temperature: 0.6,
+      topP: 0.85,
+      topK: 30
     }
   });
 
@@ -125,7 +114,7 @@ async function generateQuestionsWithRetry(category, talent, careerPath, maxRetri
       
       // Add timeout to the AI request
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('AI generation timeout')), 25000); // 25 second timeout
+        setTimeout(() => reject(new Error('AI generation timeout')), 45000); // 45 second timeout
       });
       
       const generationPromise = model.generateContent(prompt);
@@ -183,7 +172,7 @@ export default async ({ req, res, log, error }) => {
     log('=== Interview Questions Function Started ===');
     
     // Early timeout check
-    const FUNCTION_TIMEOUT = 50000; // 50 seconds
+    const FUNCTION_TIMEOUT = 90000; // 90 seconds
     const timeoutWarning = setTimeout(() => {
       log('WARNING: Function approaching timeout limit');
     }, FUNCTION_TIMEOUT - 10000);
@@ -271,14 +260,16 @@ export default async ({ req, res, log, error }) => {
       questions = await generateQuestionsWithRetry(category, talent, careerPath);
       log(`Successfully generated ${questions.length} questions`);
     } catch (aiError) {
-      clearTimeout(timeoutWarning);
-      error(`AI generation failed: ${aiError.message}`);
+       clearTimeout(timeoutWarning);
+       error(`AI generation failed: ${aiError.message}`);
+       error(`Full error: ${JSON.stringify(aiError, null, 2)}`);
       
       // Return more specific error based on the type of failure
       if (aiError.message.includes('timeout')) {
         return res.json({ 
           success: false, 
-          error: 'AI generation timeout - please try again', 
+          error: 'AI generation timeout - please try again',
+           
           statusCode: 408 
         }, 408);
       } else if (aiError.message.includes('quota') || aiError.message.includes('rate limit')) {
