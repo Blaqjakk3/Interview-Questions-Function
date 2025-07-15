@@ -69,7 +69,7 @@ function extractAndCleanJSON(text) {
     // Clean up common JSON formatting issues
     cleaned = cleaned
       .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
-      .replace(/([{,]\s*)(\w+):/g, '$1"$2":') // Quote unquoted keys
+      .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":') // Quote unquoted keys - FIXED REGEX
       .replace(/:\s*'([^']*)'/g, ': "$1"') // Convert single quotes to double quotes
       .replace(/\n/g, ' ') // Remove newlines
       .replace(/\s+/g, ' ') // Normalize whitespace
