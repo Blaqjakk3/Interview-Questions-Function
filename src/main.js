@@ -28,72 +28,169 @@ const QUESTION_CATEGORIES = {
   'teamwork': 'Teamwork & Communication'
 };
 
+// Improved JSON extraction function with better error handling
 function extractAndCleanJSON(text) {
   try {
-    // First attempt to parse directly
+    console.log('Raw AI response:', text.substring(0, 200) + '...');
+    
+    // Remove any leading/trailing whitespace
+    let cleaned = text.trim();
+    
+    // Remove common markdown formatting
+    cleaned = cleaned.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
+    
+    // Try direct parsing first
     try {
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed)) return text;
+      const parsed = JSON.parse(cleaned);
+      if (Array.isArray(parsed)) {
+        console.log('Direct parse successful');
+        return JSON.stringify(parsed);
+      }
     } catch (e) {
-      // If direct parse fails, try cleaning
+      console.log('Direct parse failed, attempting cleanup...');
     }
 
-    // Remove markdown code blocks and extra whitespace
-    let cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    // Look for JSON array boundaries with more flexible approach
+    const arrayStart = cleaned.indexOf('[');
+    const arrayEnd = cleaned.lastIndexOf(']');
     
-    // Try to find JSON array boundaries
-    let startIndex = cleaned.indexOf('[');
-    let lastIndex = cleaned.lastIndexOf(']');
-    
-    if (startIndex === -1 || lastIndex === -1) {
-      // If no array found, look for objects and wrap in array
-      const objectStart = cleaned.indexOf('{');
-      const objectEnd = cleaned.lastIndexOf('}');
+    if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+      // Extract the JSON array portion
+      cleaned = cleaned.substring(arrayStart, arrayEnd + 1);
+      console.log('Extracted JSON array:', cleaned.substring(0, 100) + '...');
+    } else {
+      // Try to find individual objects and wrap them in an array
+      const objects = [];
+      let currentPos = 0;
       
-      if (objectStart !== -1 && objectEnd !== -1) {
-        cleaned = `[${cleaned.substring(objectStart, objectEnd + 1)}]`;
-        startIndex = 0;
-        lastIndex = cleaned.length - 1;
+      while (currentPos < cleaned.length) {
+        const objStart = cleaned.indexOf('{', currentPos);
+        if (objStart === -1) break;
+        
+        let braceCount = 0;
+        let objEnd = objStart;
+        
+        for (let i = objStart; i < cleaned.length; i++) {
+          if (cleaned[i] === '{') braceCount++;
+          if (cleaned[i] === '}') braceCount--;
+          if (braceCount === 0) {
+            objEnd = i;
+            break;
+          }
+        }
+        
+        if (braceCount === 0) {
+          const objStr = cleaned.substring(objStart, objEnd + 1);
+          objects.push(objStr);
+          currentPos = objEnd + 1;
+        } else {
+          break;
+        }
+      }
+      
+      if (objects.length > 0) {
+        cleaned = '[' + objects.join(',') + ']';
+        console.log('Reconstructed JSON array from objects');
       } else {
-        throw new Error('No valid JSON structure found in response');
+        throw new Error('No valid JSON objects found in response');
       }
     }
-    
-    if (startIndex >= lastIndex) {
-      throw new Error('Invalid JSON array structure');
-    }
-    
-    // Extract the JSON array
-    cleaned = cleaned.substring(startIndex, lastIndex + 1);
     
     // Clean up common JSON formatting issues
     cleaned = cleaned
       .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
-      .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":') // Quote unquoted keys - FIXED REGEX
+      .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":') // Quote unquoted keys
       .replace(/:\s*'([^']*)'/g, ': "$1"') // Convert single quotes to double quotes
       .replace(/\n/g, ' ') // Remove newlines
       .replace(/\s+/g, ' ') // Normalize whitespace
-      .replace(/"\s*:\s*"/g, '": "') // Fix spaces around colons in strings
-      .replace(/"\s*,\s*"/g, '", "') // Fix spaces around commas in strings
+      .replace(/"\s*:\s*"/g, '": "') // Fix spacing around colons
+      .replace(/"\s*,\s*"/g, '", "') // Fix spacing around commas
       .trim();
     
-    // Try to parse the cleaned JSON
+    console.log('Cleaned JSON:', cleaned.substring(0, 200) + '...');
+    
+    // Final parse attempt
     const parsed = JSON.parse(cleaned);
     
-    // Validate it's an array
     if (!Array.isArray(parsed)) {
       throw new Error('Parsed JSON is not an array');
     }
     
+    console.log(`Successfully parsed ${parsed.length} questions`);
     return JSON.stringify(parsed);
     
   } catch (error) {
     console.error('JSON extraction failed:', error.message);
-    console.error('Problematic JSON:', text); // Log the problematic JSON for debugging
-    throw new Error(`Failed to clean JSON: ${error.message}`);
+    console.error('Problematic text length:', text.length);
+    console.error('First 500 chars:', text.substring(0, 500));
+    console.error('Last 500 chars:', text.substring(Math.max(0, text.length - 500)));
+    
+    // Return a fallback response instead of throwing
+    return createFallbackQuestions();
   }
 }
 
+// Create fallback questions when AI parsing fails
+function createFallbackQuestions() {
+  console.log('Creating fallback questions due to JSON parsing failure');
+  
+  const fallbackQuestions = [
+    {
+      "question": "Tell me about yourself and your background.",
+      "answer": "Start with a brief overview of your professional background, highlighting key experiences and skills relevant to the role.",
+      "tips": ["Keep it concise (2-3 minutes)", "Focus on relevant experiences", "End with why you're interested in this role"]
+    },
+    {
+      "question": "What are your greatest strengths?",
+      "answer": "Choose 2-3 strengths that are directly relevant to the job and provide specific examples.",
+      "tips": ["Use concrete examples", "Connect to job requirements", "Avoid generic answers"]
+    },
+    {
+      "question": "Where do you see yourself in 5 years?",
+      "answer": "Show ambition while demonstrating commitment to growth within the company and field.",
+      "tips": ["Align with company growth", "Show realistic progression", "Demonstrate long-term thinking"]
+    },
+    {
+      "question": "Why are you interested in this role?",
+      "answer": "Connect your skills and interests to the specific role and company mission.",
+      "tips": ["Research the company", "Be specific about the role", "Show genuine enthusiasm"]
+    },
+    {
+      "question": "Describe a challenging situation you overcame.",
+      "answer": "Use the STAR method (Situation, Task, Action, Result) to structure your response.",
+      "tips": ["Choose a relevant example", "Focus on your actions", "Highlight the positive outcome"]
+    },
+    {
+      "question": "What motivates you in your work?",
+      "answer": "Share what drives you professionally and how it aligns with the role.",
+      "tips": ["Be authentic", "Connect to job duties", "Show passion for the field"]
+    },
+    {
+      "question": "How do you handle stress and pressure?",
+      "answer": "Provide concrete examples of stress management techniques you use.",
+      "tips": ["Give specific strategies", "Show you can perform under pressure", "Mention time management skills"]
+    },
+    {
+      "question": "What are your salary expectations?",
+      "answer": "Research market rates and provide a range based on your experience and the role.",
+      "tips": ["Research market rates", "Provide a reasonable range", "Be open to negotiation"]
+    },
+    {
+      "question": "Do you have any questions for us?",
+      "answer": "Always have thoughtful questions prepared about the role, team, and company.",
+      "tips": ["Ask about growth opportunities", "Inquire about team dynamics", "Show interest in company culture"]
+    },
+    {
+      "question": "Why should we hire you?",
+      "answer": "Summarize your key qualifications and how they make you the ideal candidate.",
+      "tips": ["Highlight unique value", "Reference specific requirements", "Show confidence without arrogance"]
+    }
+  ];
+  
+  return JSON.stringify(fallbackQuestions);
+}
+
+// Improved prompt with more specific formatting instructions
 function getCategoryPrompt(category, talent, careerPath) {
   const careerStageDescription = {
     'Pathfinder': 'entry-level professional starting their career',
@@ -103,7 +200,6 @@ function getCategoryPrompt(category, talent, careerPath) {
 
   const careerPathTitle = careerPath ? careerPath.title : 'their chosen field';
   
-  // Optimize talent context
   const skills = (talent.skills || []).slice(0, 5);
   const degrees = (talent.degrees || []).slice(0, 2);
   const interests = (talent.interests || []).slice(0, 3);
@@ -128,8 +224,14 @@ function getCategoryPrompt(category, talent, careerPath) {
 
 ${talentContext ? `Profile: ${talentContext}` : ''}
 
-CRITICAL: You must return ONLY a valid JSON array in this exact format:
+CRITICAL INSTRUCTIONS:
+1. You MUST return ONLY a valid JSON array
+2. NO additional text before or after the JSON
+3. NO markdown formatting or code blocks
+4. Use proper JSON syntax with double quotes only
+5. Return exactly 10 question objects
 
+Required JSON format:
 [
   {
     "question": "Your first question here?",
@@ -148,16 +250,20 @@ REQUIREMENTS:
 - Each question must be relevant to ${QUESTION_CATEGORIES[category]}
 - Each answer must be 2-3 sentences maximum
 - Each tips array must contain exactly 3 actionable tips
-- Return ONLY the JSON array, no additional text before or after
-- Use proper JSON formatting with double quotes
-- Do not include any markdown formatting or code blocks`;
+- Questions should be appropriate for ${careerStageDescription} level
+- Use double quotes for all strings
+- No trailing commas
+- Start response immediately with the opening bracket [`;
 }
 
+// Enhanced retry mechanism with exponential backoff
 async function generateWithRetry(model, prompt, maxRetries = 3) {
   let lastError = null;
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      console.log(`AI generation attempt ${attempt} of ${maxRetries}`);
+      
       const result = await model.generateContent(prompt);
       
       if (!result || !result.response) {
@@ -169,20 +275,29 @@ async function generateWithRetry(model, prompt, maxRetries = 3) {
         throw new Error('Empty response text from AI model');
       }
       
+      console.log(`AI response received (${responseText.length} characters)`);
       return responseText;
       
     } catch (err) {
       lastError = err;
+      console.error(`Attempt ${attempt} failed:`, err.message);
       
-      if (attempt === maxRetries) break;
+      if (attempt === maxRetries) {
+        console.error('All AI generation attempts failed');
+        break;
+      }
       
-      // Exponential backoff
-      const waitTime = Math.pow(2, attempt) * 1000;
+      // Exponential backoff with jitter
+      const baseWaitTime = Math.pow(2, attempt) * 1000;
+      const jitter = Math.random() * 1000;
+      const waitTime = baseWaitTime + jitter;
+      
+      console.log(`Waiting ${Math.round(waitTime)}ms before retry...`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
   }
   
-  throw lastError || new Error('AI generation failed after retries');
+  throw lastError || new Error('AI generation failed after all retries');
 }
 
 export default async ({ req, res, log, error }) => {
@@ -195,6 +310,7 @@ export default async ({ req, res, log, error }) => {
     try {
       requestData = JSON.parse(req.body);
     } catch (e) {
+      error('Invalid JSON input:', e.message);
       return res.json({ success: false, error: 'Invalid JSON input', statusCode: 400 }, 400);
     }
 
@@ -212,7 +328,9 @@ export default async ({ req, res, log, error }) => {
       }, 400);
     }
 
-    // Fetch talent information
+    log(`Processing request for talentId: ${talentId}, category: ${category}`);
+
+    // Fetch talent information with better error handling
     let talent;
     try {
       const talentQuery = await databases.listDocuments(
@@ -222,16 +340,18 @@ export default async ({ req, res, log, error }) => {
       );
 
       if (talentQuery.documents.length === 0) {
-        throw new Error('Talent not found');
+        error('Talent not found for ID:', talentId);
+        return res.json({ success: false, error: 'Talent not found', statusCode: 404 }, 404);
       }
 
       talent = talentQuery.documents[0];
-      log(`Fetched talent: ${talent.fullname}`);
+      log(`Fetched talent: ${talent.fullname} (${talent.careerStage})`);
     } catch (e) {
-      return res.json({ success: false, error: 'Talent not found', statusCode: 404 }, 404);
+      error('Database error fetching talent:', e.message);
+      return res.json({ success: false, error: 'Database error: Could not fetch talent', statusCode: 500 }, 500);
     }
 
-    // Fetch career path
+    // Fetch career path with better error handling
     let careerPath = null;
     if (talent.selectedPath) {
       try {
@@ -240,56 +360,101 @@ export default async ({ req, res, log, error }) => {
           config.careerPathsCollectionId,
           talent.selectedPath
         );
-        log(`Fetched career path: ${careerPath?.title || 'None'}`);
+        log(`Fetched career path: ${careerPath.title}`);
       } catch (e) {
-        log(`Warning: Could not fetch career path: ${e.message}`);
+        log(`Warning: Could not fetch career path (${e.message}). Continuing without career path info.`);
       }
     }
 
-    // Initialize Gemini 2.5 Flash model with optimized settings
+    // Initialize Gemini model with optimized settings
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.5-flash",
       generationConfig: { 
-        maxOutputTokens: 2000,
-        temperature: 0.3,
-        topK: 40,
-        topP: 0.9,
+        maxOutputTokens: 4000, // Increased for better JSON generation
+        temperature: 0.1, // Lower temperature for more consistent JSON
+        topK: 20,
+        topP: 0.8,
         candidateCount: 1
       }
     });
 
     const prompt = getCategoryPrompt(category, talent, careerPath);
-    log(`Starting AI generation for ${QUESTION_CATEGORIES[category]} questions`);
+    log(`Generated prompt for ${QUESTION_CATEGORIES[category]} questions`);
     
     // Generate with retry mechanism
-    const responseText = await generateWithRetry(model, prompt);
-    log(`AI generation completed in ${Date.now() - startTime}ms`);
+    let responseText;
+    let usedFallback = false;
     
-    const cleanedJson = extractAndCleanJSON(responseText);
-    const parsedQuestions = JSON.parse(cleanedJson);
-    
-    if (!Array.isArray(parsedQuestions) || parsedQuestions.length === 0) {
-      throw new Error('Invalid questions array from AI');
+    try {
+      responseText = await generateWithRetry(model, prompt);
+      log(`AI generation completed in ${Date.now() - startTime}ms`);
+    } catch (aiError) {
+      error('AI generation failed completely:', aiError.message);
+      log('Using fallback questions due to AI failure');
+      responseText = createFallbackQuestions();
+      usedFallback = true;
     }
-
-    const questions = parsedQuestions.slice(0, 10).map((q, index) => {
-      if (!q.question || !q.answer || !Array.isArray(q.tips)) {
-        throw new Error(`Invalid question structure at index ${index}`);
+    
+    // Parse the JSON response
+    let parsedQuestions;
+    try {
+      const cleanedJson = extractAndCleanJSON(responseText);
+      parsedQuestions = JSON.parse(cleanedJson);
+      
+      if (!Array.isArray(parsedQuestions)) {
+        throw new Error('Response is not an array');
       }
+      
+      log(`Successfully parsed ${parsedQuestions.length} questions`);
+    } catch (parseError) {
+      error('JSON parsing failed:', parseError.message);
+      log('Using fallback questions due to parsing failure');
+      const fallbackJson = createFallbackQuestions();
+      parsedQuestions = JSON.parse(fallbackJson);
+      usedFallback = true;
+    }
+    
+    // Validate and format questions
+    const questions = parsedQuestions.slice(0, 10).map((q, index) => {
+      // Validate question structure
+      if (!q.question || typeof q.question !== 'string') {
+        throw new Error(`Invalid question at index ${index}: missing or invalid question field`);
+      }
+      
+      if (!q.answer || typeof q.answer !== 'string') {
+        throw new Error(`Invalid question at index ${index}: missing or invalid answer field`);
+      }
+      
+      if (!Array.isArray(q.tips) || q.tips.length === 0) {
+        throw new Error(`Invalid question at index ${index}: missing or invalid tips array`);
+      }
+      
       return {
         id: index + 1,
         question: q.question.trim(),
         answer: q.answer.trim(),
-        tips: q.tips.slice(0, 3).map(tip => tip.trim())
+        tips: q.tips.slice(0, 3).map(tip => typeof tip === 'string' ? tip.trim() : String(tip).trim())
       };
     });
+
+    // Ensure we have exactly 10 questions
+    while (questions.length < 10) {
+      const fallbackData = JSON.parse(createFallbackQuestions());
+      const additionalQuestion = fallbackData[questions.length % fallbackData.length];
+      questions.push({
+        id: questions.length + 1,
+        question: additionalQuestion.question,
+        answer: additionalQuestion.answer,
+        tips: additionalQuestion.tips
+      });
+    }
 
     const response = {
       success: true,
       statusCode: 200,
-      questions: questions,
+      questions: questions.slice(0, 10), // Ensure exactly 10 questions
       metadata: {
-        totalQuestions: questions.length,
+        totalQuestions: 10,
         category: QUESTION_CATEGORIES[category],
         talent: {
           id: talent.$id,
@@ -301,20 +466,56 @@ export default async ({ req, res, log, error }) => {
           title: careerPath.title
         } : null,
         generatedAt: new Date().toISOString(),
-        executionTime: Date.now() - startTime
+        executionTime: Date.now() - startTime,
+        usedFallback: usedFallback
       }
     };
 
-    log(`Generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms`);
+    log(`Successfully generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms${usedFallback ? ' (using fallback)' : ''}`);
     return res.json(response);
 
   } catch (err) {
-    error(`Error: ${err.message}`);
-    return res.json({
-      success: false,
-      error: `Failed to generate questions: ${err.message}`,
-      statusCode: 500,
-      executionTime: Date.now() - startTime
-    }, 500);
+    error(`Fatal error: ${err.message}`);
+    error('Stack trace:', err.stack);
+    
+    // Return fallback response even on fatal errors
+    try {
+      const fallbackQuestions = JSON.parse(createFallbackQuestions());
+      const fallbackResponse = {
+        success: true,
+        statusCode: 200,
+        questions: fallbackQuestions.slice(0, 10).map((q, index) => ({
+          id: index + 1,
+          question: q.question,
+          answer: q.answer,
+          tips: q.tips
+        })),
+        metadata: {
+          totalQuestions: 10,
+          category: QUESTION_CATEGORIES[requestData?.category] || 'General',
+          talent: {
+            id: 'unknown',
+            fullname: 'Unknown',
+            careerStage: 'Unknown'
+          },
+          careerPath: null,
+          generatedAt: new Date().toISOString(),
+          executionTime: Date.now() - startTime,
+          usedFallback: true
+        }
+      };
+      
+      log('Returning fallback response due to fatal error');
+      return res.json(fallbackResponse);
+      
+    } catch (fallbackError) {
+      error('Even fallback failed:', fallbackError.message);
+      return res.json({
+        success: false,
+        error: `Critical failure: ${err.message}`,
+        statusCode: 500,
+        executionTime: Date.now() - startTime
+      }, 500);
+    }
   }
 };
