@@ -30,28 +30,59 @@ const QUESTION_CATEGORIES = {
 
 function extractAndCleanJSON(text) {
   try {
-    // First attempt to parse directly
-    try {
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed)) {
-        return JSON.stringify(parsed);
-      }
-    } catch (e) {
-      // If direct parse fails, try cleaning
-    }
-
+    // First, let's log what we're getting from the AI
+    console.log('Raw AI Response:', text.substring(0, 500) + '...');
+    
     // Remove markdown code blocks and extra whitespace
     let cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     
-    // Try to find JSON boundaries
-    let startIndex = Math.max(cleaned.indexOf('['), cleaned.indexOf('{'));
-    let lastIndex = Math.max(cleaned.lastIndexOf(']'), cleaned.lastIndexOf('}'));
+    // Try to find JSON array boundaries more flexibly
+    let startIndex = cleaned.indexOf('[');
+    let lastIndex = cleaned.lastIndexOf(']');
     
-    if (startIndex === -1 || lastIndex === -1 || startIndex >= lastIndex) {
+    // If we can't find array brackets, try to find object brackets and wrap in array
+    if (startIndex === -1 || lastIndex === -1) {
+      console.log('No array brackets found, looking for objects...');
+      
+      // Look for objects that start with { and end with }
+      const objectStart = cleaned.indexOf('{');
+      const objectEnd = cleaned.lastIndexOf('}');
+      
+      if (objectStart !== -1 && objectEnd !== -1) {
+        // Extract the content between braces
+        const objectContent = cleaned.substring(objectStart, objectEnd + 1);
+        
+        // Try to parse as a single object first
+        try {
+          const singleObject = JSON.parse(objectContent);
+          // If it's a valid object, wrap it in an array
+          return JSON.stringify([singleObject]);
+        } catch (e) {
+          console.log('Single object parsing failed, trying to find multiple objects');
+          
+          // Try to find multiple objects and wrap them in an array
+          const objectPattern = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
+          const objects = objectContent.match(objectPattern);
+          
+          if (objects && objects.length > 0) {
+            try {
+              const parsedObjects = objects.map(obj => JSON.parse(obj));
+              return JSON.stringify(parsedObjects);
+            } catch (parseError) {
+              console.log('Multiple objects parsing failed:', parseError);
+            }
+          }
+        }
+      }
+      
       throw new Error('No valid JSON structure found in response');
     }
     
-    // Extract the JSON portion
+    if (startIndex >= lastIndex) {
+      throw new Error('Invalid JSON array structure');
+    }
+    
+    // Extract the JSON array
     cleaned = cleaned.substring(startIndex, lastIndex + 1);
     
     // Clean up common JSON formatting issues
@@ -66,20 +97,22 @@ function extractAndCleanJSON(text) {
     // Try to parse the cleaned JSON
     const parsed = JSON.parse(cleaned);
     
-    // If we got an object, wrap it in an array
-    if (parsed && !Array.isArray(parsed)) {
-      return JSON.stringify([parsed]);
+    // Validate it's an array
+    if (!Array.isArray(parsed)) {
+      throw new Error('Parsed JSON is not an array');
     }
     
+    console.log(`Successfully parsed JSON array with ${parsed.length} items`);
     return JSON.stringify(parsed);
     
   } catch (error) {
     console.error('JSON extraction failed:', error.message);
+    console.error('Problematic text:', text.substring(0, 1000));
     throw new Error(`Failed to clean JSON: ${error.message}`);
   }
 }
 
-function getEnhancedPrompt(category, talent, careerPath) {
+function getCategoryPrompt(category, talent, careerPath) {
   const careerStageDescription = {
     'Pathfinder': 'entry-level professional starting their career',
     'Trailblazer': 'mid-level professional advancing their career',
@@ -88,113 +121,179 @@ function getEnhancedPrompt(category, talent, careerPath) {
 
   const careerPathTitle = careerPath ? careerPath.title : 'their chosen field';
   
-  // Enhanced talent context
-  const skills = (talent.skills || []).slice(0, 5).join(', ');
-  const degrees = (talent.degrees || []).slice(0, 2).join(', ');
-  const interests = (talent.interests || []).slice(0, 3).join(', ');
-  const experience = talent.yearsOfExperience ? `${talent.yearsOfExperience} years of experience` : '';
+  // Optimize talent context - only include most relevant info
+  const skills = (talent.skills || []).slice(0, 5);
+  const degrees = (talent.degrees || []).slice(0, 2);
+  const interests = (talent.interests || []).slice(0, 3);
 
-  const categorySpecificPrompts = {
-    'personal': `Generate exactly 10 insightful personal background questions for ${talent.fullname}, a ${careerStageDescription} in ${careerPathTitle}. Focus on unique aspects of their background, motivations, and personal strengths that would be relevant for interviews in this field.`,
-    'career': `Generate exactly 10 strategic career development questions for ${talent.fullname}, a ${careerStageDescription} in ${careerPathTitle}. Focus on career trajectory, professional growth, and alignment with industry trends.`,
-    'company': `Generate exactly 10 targeted company/role fit questions for ${talent.fullname}, a ${careerStageDescription} in ${careerPathTitle}. Focus on specific company values, culture fit, and role-specific competencies.`,
-    'technical': `Generate exactly 10 technical depth questions for ${talent.fullname}, a ${careerStageDescription} in ${careerPathTitle}. Focus on current technologies, problem-solving approaches, and technical decision-making.`,
-    'behavioral': `Generate exactly 10 behavioral competency questions for ${talent.fullname}, a ${careerStageDescription} in ${careerPathTitle}. Use the STAR format and focus on measurable outcomes and learning experiences.`,
-    'problem-solving': `Generate exactly 10 complex problem-solving questions for ${talent.fullname}, a ${careerStageDescription} in ${careerPathTitle}. Focus on analytical approaches, creative solutions, and results-oriented thinking.`,
-    'teamwork': `Generate exactly 10 collaboration-focused questions for ${talent.fullname}, a ${careerStageDescription} in ${careerPathTitle}. Focus on team dynamics, conflict resolution, and collective achievement.`
+  const talentContext = [
+    skills.length > 0 ? `Skills: ${skills.join(', ')}` : '',
+    degrees.length > 0 ? `Education: ${degrees.join(', ')}` : '',
+    interests.length > 0 ? `Interests: ${interests.join(', ')}` : ''
+  ].filter(Boolean).join('. ');
+
+  const categoryPrompts = {
+    'personal': `Generate exactly 10 personal background questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on motivation, strengths, challenges.`,
+    'career': `Generate exactly 10 career goals questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on plans, ambitions, choices.`,
+    'company': `Generate exactly 10 company/role fit questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on why this company/role.`,
+    'technical': `Generate exactly 10 technical questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on relevant skills and knowledge.`,
+    'behavioral': `Generate exactly 10 STAR format behavioral questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on past experiences.`,
+    'problem-solving': `Generate exactly 10 problem-solving questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on approach to challenges.`,
+    'teamwork': `Generate exactly 10 teamwork questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on collaboration and communication.`
   };
 
-  return `You are an expert career coach specializing in ${careerPathTitle}. Create interview questions that will help ${talent.fullname} excel in their job search.
+  return `${categoryPrompts[category]}
 
-Context:
-- Career Stage: ${careerStageDescription}
-- Skills: ${skills || 'Not specified'}
-- Education: ${degrees || 'Not specified'}
-- Interests: ${interests || 'Not specified'}
-- Experience: ${experience || 'Not specified'}
+${talentContext ? `Profile: ${talentContext}` : ''}
 
-Task:
-${categorySpecificPrompts[category]}
+CRITICAL: You must return ONLY a valid JSON array in this exact format:
 
-Output Requirements:
-- Return ONLY a valid JSON array of exactly 10 question objects
-- Each object must have:
-  - "question": A specific, tailored interview question
-  - "answer": A 2-3 sentence professional response guideline
-  - "tips": An array of exactly 3 actionable, specific tips
-- Format:
-  [
-    {
-      "question": "Tailored question here?",
-      "answer": "Professional response guidance here.",
-      "tips": ["Specific tip 1", "Specific tip 2", "Specific tip 3"]
-    },
-    ...
-  ]
+[
+  {
+    "question": "Your first question here?",
+    "answer": "Brief 2-3 sentence answer explaining how to approach this question.",
+    "tips": ["Specific tip 1", "Specific tip 2", "Specific tip 3"]
+  },
+  {
+    "question": "Your second question here?",
+    "answer": "Brief 2-3 sentence answer explaining how to approach this question.",
+    "tips": ["Specific tip 1", "Specific tip 2", "Specific tip 3"]
+  }
+]
 
-Important:
-- Questions must be highly relevant to ${QUESTION_CATEGORIES[category]}
-- Avoid generic questions - personalize based on the context
-- Ensure technical accuracy for the field
-- Maintain professional tone throughout`;
+REQUIREMENTS:
+- Return EXACTLY 10 question objects
+- Each question must be relevant to ${QUESTION_CATEGORIES[category]}
+- Each answer must be 2-3 sentences maximum
+- Each tips array must contain exactly 3 actionable tips
+- Return ONLY the JSON array, no additional text before or after
+- Use proper JSON formatting with double quotes
+- Do not include any markdown formatting or code blocks`;
 }
 
-async function generateQuestionsWithRetry(model, prompt, maxRetries = 3) {
-  let lastError;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const result = await model.generateContent(prompt);
-      const responseText = result.response.text();
-      
-      // Validate we got some response
-      if (!responseText || responseText.trim() === '') {
-        throw new Error('Empty response from AI model');
-      }
-      
-      // Try to extract JSON
-      const cleanedJson = extractAndCleanJSON(responseText);
-      const parsedQuestions = JSON.parse(cleanedJson);
-      
-      // Validate structure
-      if (!Array.isArray(parsedQuestions) || parsedQuestions.length !== 10) {
-        throw new Error(`Expected 10 questions, got ${parsedQuestions.length}`);
-      }
-      
-      // Validate each question
-      const validatedQuestions = parsedQuestions.map((q, index) => {
-        if (!q.question || typeof q.question !== 'string') {
-          throw new Error(`Missing or invalid question at index ${index}`);
+// Enhanced timeout wrapper with better error handling
+async function generateWithTimeout(model, prompt, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('AI generation timeout - request took too long'));
+    }, timeoutMs);
+
+    model.generateContent(prompt)
+      .then(result => {
+        clearTimeout(timer);
+        
+        if (!result || !result.response) {
+          reject(new Error('Empty response from AI model'));
+          return;
         }
-        if (!q.answer || typeof q.answer !== 'string') {
-          throw new Error(`Missing or invalid answer at index ${index}`);
+        
+        const responseText = result.response.text();
+        if (!responseText || responseText.trim() === '') {
+          reject(new Error('Empty response text from AI model'));
+          return;
         }
-        if (!Array.isArray(q.tips) || q.tips.length !== 3) {
-          throw new Error(`Tips must be an array of exactly 3 items at index ${index}`);
-        }
-        return {
-          id: index + 1,
-          question: q.question.trim(),
-          answer: q.answer.trim(),
-          tips: q.tips.map(tip => tip.toString().trim())
-        };
+        
+        resolve(result);
+      })
+      .catch(err => {
+        clearTimeout(timer);
+        console.error('AI generation error:', err);
+        reject(new Error(`AI generation failed: ${err.message}`));
       });
-      
-      return validatedQuestions;
-      
-    } catch (error) {
-      lastError = error;
-      console.error(`Attempt ${attempt} failed:`, error.message);
-      
-      if (attempt === maxRetries) break;
-      
-      // Exponential backoff with longer delays for free tier
-      const waitTime = Math.pow(2, attempt) * 2000; // Increased wait time
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
+  });
+}
+
+// Fallback questions generator for when AI fails
+function generateFallbackQuestions(category, talent, careerPath) {
+  const careerPathTitle = careerPath ? careerPath.title : 'your chosen field';
+  
+  const fallbackQuestions = {
+    'personal': [
+      {
+        question: "Tell me about yourself and what motivates you in your career.",
+        answer: "Structure your response around your current situation, relevant experiences, and career goals. Focus on what drives your passion for this field.",
+        tips: ["Keep it concise and professional", "Connect your background to the role", "Show enthusiasm for your field"]
+      },
+      {
+        question: "What are your greatest strengths and how do they apply to this role?",
+        answer: "Choose 2-3 key strengths that directly relate to the position. Provide specific examples of how you've demonstrated these strengths.",
+        tips: ["Use concrete examples", "Relate strengths to job requirements", "Avoid generic answers"]
+      },
+      {
+        question: "What is your biggest weakness and how are you working to improve it?",
+        answer: "Choose a real weakness that won't disqualify you. Explain the steps you're taking to address it and show self-awareness.",
+        tips: ["Be authentic but strategic", "Show improvement efforts", "Don't say you have no weaknesses"]
+      }
+    ],
+    'career': [
+      {
+        question: "Where do you see yourself in 5 years?",
+        answer: "Align your goals with the company's growth opportunities. Show ambition while being realistic about career progression.",
+        tips: ["Research company career paths", "Show long-term thinking", "Demonstrate ambition and loyalty"]
+      },
+      {
+        question: "Why did you choose this career path?",
+        answer: "Share your genuine interest in the field. Mention specific experiences or moments that led to this decision.",
+        tips: ["Be authentic and passionate", "Connect to personal experiences", "Show genuine interest in the field"]
+      }
+    ],
+    'company': [
+      {
+        question: "Why do you want to work for this company?",
+        answer: "Research the company's values, culture, and recent achievements. Connect these to your own values and career goals.",
+        tips: ["Research company thoroughly", "Connect to your values", "Mention specific company achievements"]
+      }
+    ],
+    'technical': [
+      {
+        question: `What technical skills are most important for success in ${careerPathTitle}?`,
+        answer: "Discuss both hard and soft technical skills. Mention your proficiency level and how you stay current with technology.",
+        tips: ["Mention specific technologies", "Show continuous learning", "Relate to job requirements"]
+      }
+    ],
+    'behavioral': [
+      {
+        question: "Describe a time when you faced a significant challenge. How did you handle it?",
+        answer: "Use the STAR method: Situation, Task, Action, Result. Focus on your problem-solving process and what you learned.",
+        tips: ["Use the STAR method", "Show problem-solving skills", "Emphasize positive outcomes"]
+      }
+    ],
+    'problem-solving': [
+      {
+        question: "How do you approach solving complex problems?",
+        answer: "Outline your systematic approach: analyze the problem, research solutions, implement, and evaluate results.",
+        tips: ["Show systematic thinking", "Mention analytical tools", "Emphasize learning from results"]
+      }
+    ],
+    'teamwork': [
+      {
+        question: "How do you handle conflicts with team members?",
+        answer: "Emphasize open communication, active listening, and finding common ground. Show maturity in conflict resolution.",
+        tips: ["Show emotional intelligence", "Emphasize communication", "Focus on positive outcomes"]
+      }
+    ]
+  };
+
+  const categoryQuestions = fallbackQuestions[category] || fallbackQuestions['personal'];
+  
+  // Expand to 10 questions by adding variations
+  const expandedQuestions = [...categoryQuestions];
+  
+  // Add generic questions to reach 10
+  while (expandedQuestions.length < 10) {
+    expandedQuestions.push({
+      question: `What interests you most about working in ${careerPathTitle}?`,
+      answer: "Focus on specific aspects of the field that excite you. Show genuine passion and knowledge about the industry.",
+      tips: ["Be specific and passionate", "Show industry knowledge", "Connect to personal interests"]
+    });
   }
   
-  throw new Error(`Failed after ${maxRetries} attempts. Last error: ${lastError.message}`);
+  return expandedQuestions.slice(0, 10).map((q, index) => ({
+    id: index + 1,
+    question: q.question,
+    answer: q.answer,
+    tips: q.tips
+  }));
 }
 
 export default async ({ req, res, log, error }) => {
@@ -238,9 +337,18 @@ export default async ({ req, res, log, error }) => {
       }
 
       talent = talentQuery.documents[0];
-      log(`Fetched talent: ${talent.fullname}`);
+      log(`Fetched talent: ${talent.fullname} (${Date.now() - startTime}ms)`);
     } catch (e) {
       return res.json({ success: false, error: 'Talent not found', statusCode: 404 }, 404);
+    }
+
+    // Quick timeout check
+    if (Date.now() - startTime > 3000) {
+      return res.json({ 
+        success: false, 
+        error: 'Function timeout - database queries took too long', 
+        statusCode: 408 
+      }, 408);
     }
 
     // Fetch career path
@@ -252,48 +360,71 @@ export default async ({ req, res, log, error }) => {
           config.careerPathsCollectionId,
           talent.selectedPath
         );
-        log(`Fetched career path: ${careerPath.title}`);
+        log(`Fetched career path: ${careerPath.title} (${Date.now() - startTime}ms)`);
       } catch (e) {
-        log(`Note: No career path found for talent`);
+        log(`Warning: Could not fetch career path: ${e.message}`);
       }
     }
 
-    // Initialize Gemini model - using 2.0 Flash for free tier
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.0-flash-exp",
-      generationConfig: { 
-        maxOutputTokens: 3000, // Reduced for free tier
-        temperature: 0.7,
-        topK: 40,
-        topP: 0.9,
-        candidateCount: 1
-      },
-      safetySettings: [
-        {
-          category: "HARM_CATEGORY_HARASSMENT",
-          threshold: "BLOCK_MEDIUM_AND_ABOVE"
-        },
-        {
-          category: "HARM_CATEGORY_HATE_SPEECH",
-          threshold: "BLOCK_MEDIUM_AND_ABOVE"
-        },
-        {
-          category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-          threshold: "BLOCK_MEDIUM_AND_ABOVE"
-        },
-        {
-          category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-          threshold: "BLOCK_MEDIUM_AND_ABOVE"
+    let questions;
+    let usedFallback = false;
+    
+    // Try AI generation first
+    try {
+      // Initialize Gemini 2.5 Flash model with optimized settings
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-2.5-flash",
+        generationConfig: { 
+          maxOutputTokens: 2000,
+          temperature: 0.3,
+          topK: 40,
+          topP: 0.9,
+          candidateCount: 1
         }
-      ]
-    });
+      });
 
-    const prompt = getEnhancedPrompt(category, talent, careerPath);
-    log(`Starting AI generation for ${QUESTION_CATEGORIES[category]} questions using Gemini 2.0 Flash`);
-    
-    // Generate with retry mechanism
-    const questions = await generateQuestionsWithRetry(model, prompt);
-    
+      const prompt = getCategoryPrompt(category, talent, careerPath);
+      log(`Starting AI generation for ${QUESTION_CATEGORIES[category]} questions (${Date.now() - startTime}ms)`);
+      
+      // Try with 15 second timeout
+      const result = await generateWithTimeout(model, prompt, 15000);
+      const responseText = result.response.text();
+      
+      log(`AI generation completed in ${Date.now() - startTime}ms`);
+      log(`Response length: ${responseText.length} characters`);
+      
+      const cleanedJson = extractAndCleanJSON(responseText);
+      const parsedQuestions = JSON.parse(cleanedJson);
+      
+      if (!Array.isArray(parsedQuestions) || parsedQuestions.length === 0) {
+        throw new Error('Invalid questions array from AI');
+      }
+
+      questions = parsedQuestions.slice(0, 10).map((q, index) => {
+        if (!q.question || !q.answer || !Array.isArray(q.tips)) {
+          throw new Error(`Invalid question structure at index ${index}`);
+        }
+        return {
+          id: index + 1,
+          question: q.question.trim(),
+          answer: q.answer.trim(),
+          tips: q.tips.slice(0, 3).map(tip => tip.trim())
+        };
+      });
+
+      log(`Successfully processed ${questions.length} AI-generated questions`);
+
+    } catch (aiError) {
+      error(`AI generation failed: ${aiError.message}`);
+      log('Falling back to predefined questions...');
+      
+      // Use fallback questions
+      questions = generateFallbackQuestions(category, talent, careerPath);
+      usedFallback = true;
+      
+      log(`Using ${questions.length} fallback questions`);
+    }
+
     const response = {
       success: true,
       statusCode: 200,
@@ -312,19 +443,18 @@ export default async ({ req, res, log, error }) => {
         } : null,
         generatedAt: new Date().toISOString(),
         executionTime: Date.now() - startTime,
-        usedFallback: false,
-        modelUsed: "gemini-2.0-flash-exp"
+        usedFallback: usedFallback
       }
     };
 
-    log(`Successfully generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms`);
+    log(`Generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms (fallback: ${usedFallback})`);
     return res.json(response);
 
   } catch (err) {
     error(`Unexpected Error: ${err.message}`);
     return res.json({
       success: false,
-      error: 'Failed to generate questions: ' + err.message,
+      error: 'Internal server error',
       statusCode: 500,
       executionTime: Date.now() - startTime
     }, 500);
