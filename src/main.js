@@ -60,55 +60,51 @@ function getCategoryPrompt(category, talent, careerPath) {
   }[talent.careerStage] || 'professional';
 
   const careerPathTitle = careerPath ? careerPath.title : 'their chosen field';
-  const skills = talent.skills || [];
-  const degrees = talent.degrees || [];
-  const interests = talent.interests || [];
-  const certifications = talent.certifications || [];
+  
+  // Optimize talent context - only include most relevant info
+  const skills = (talent.skills || []).slice(0, 5); // Limit to top 5 skills
+  const degrees = (talent.degrees || []).slice(0, 2); // Limit to top 2 degrees
+  const interests = (talent.interests || []).slice(0, 3); // Limit to top 3 interests
 
   const talentContext = [
     skills.length > 0 ? `Skills: ${skills.join(', ')}` : '',
     degrees.length > 0 ? `Education: ${degrees.join(', ')}` : '',
-    interests.length > 0 ? `Interests: ${interests.join(', ')}` : '',
-    certifications.length > 0 ? `Certifications: ${certifications.join(', ')}` : ''
+    interests.length > 0 ? `Interests: ${interests.join(', ')}` : ''
   ].filter(Boolean).join('. ');
 
+  // Shortened, more focused prompts for faster generation
   const categoryPrompts = {
-    'personal': `Generate exactly 10 personal background and motivation questions for ${talent.fullname}, a ${careerStageDescription} interested in ${careerPathTitle}. Focus on questions about their personality, motivations, strengths, weaknesses, and how they handle challenges.`,
-    'career': `Generate exactly 10 career goals and aspirations questions for ${talent.fullname}, a ${careerStageDescription} interested in ${careerPathTitle}. Focus on questions about their long-term plans, career choices, and professional ambitions.`,
-    'company': `Generate exactly 10 company and role fit questions for ${talent.fullname}, a ${careerStageDescription} interested in ${careerPathTitle}. Focus on questions about why they want to work for specific companies and why they're interested in particular roles.`,
-    'technical': `Generate exactly 10 technical/role-specific questions for ${talent.fullname}, a ${careerStageDescription} interested in ${careerPathTitle}. Focus on questions that test their knowledge and skills relevant to ${careerPathTitle}.`,
-    'behavioral': `Generate exactly 10 behavioral questions (using STAR format) for ${talent.fullname}, a ${careerStageDescription} interested in ${careerPathTitle}. Focus on questions about past experiences that demonstrate their abilities.`,
-    'problem-solving': `Generate exactly 10 problem-solving and critical thinking questions for ${talent.fullname}, a ${careerStageDescription} interested in ${careerPathTitle}. Focus on questions that test how they approach challenges and think through problems.`,
-    'teamwork': `Generate exactly 10 teamwork and communication questions for ${talent.fullname}, a ${careerStageDescription} interested in ${careerPathTitle}. Focus on questions about collaboration, communication, and working with others.`
+    'personal': `Generate 10 personal background questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on motivation, strengths, challenges.`,
+    'career': `Generate 10 career goals questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on plans, ambitions, choices.`,
+    'company': `Generate 10 company/role fit questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on why this company/role.`,
+    'technical': `Generate 10 technical questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on relevant skills and knowledge.`,
+    'behavioral': `Generate 10 STAR format behavioral questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on past experiences.`,
+    'problem-solving': `Generate 10 problem-solving questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on approach to challenges.`,
+    'teamwork': `Generate 10 teamwork questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on collaboration and communication.`
   };
 
   return `${categoryPrompts[category]}
 
-${talentContext ? `Talent Profile: ${talentContext}` : ''}
+${talentContext ? `Profile: ${talentContext}` : ''}
 
-Return ONLY valid JSON array:
+Return ONLY this JSON format:
 [
   {
-    "question": "Sample question...",
-    "answer": "Personalized answer incorporating their background and skills...",
-    "tips": [
-      "Specific actionable tip 1",
-      "Specific actionable tip 2", 
-      "Specific actionable tip 3"
-    ]
+    "question": "Question text",
+    "answer": "Brief 2-3 sentence answer",
+    "tips": ["Tip 1", "Tip 2", "Tip 3"]
   }
 ]
 
 Requirements:
-- Include only ${QUESTION_CATEGORIES[category]} type questions
-- Answers should be 2-4 sentences, natural and conversational
-- Tips must be specific, actionable advice (not generic)
-- Incorporate their skills, education, and interests where relevant
-- Return valid JSON only, no extra text`;
+- Exactly 10 questions for ${QUESTION_CATEGORIES[category]}
+- Answers: 2-3 sentences, natural tone
+- Tips: 3 specific, actionable tips each
+- Valid JSON only, no extra text`;
 }
 
-// Timeout wrapper for AI generation
-async function generateWithTimeout(model, prompt, timeoutMs = 25000) {
+// Aggressive timeout wrapper - must complete before Appwrite timeout
+async function generateWithTimeout(model, prompt, timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error('AI generation timeout'));
@@ -153,7 +149,7 @@ export default async ({ req, res, log, error }) => {
       }, 400);
     }
 
-    // Fetch talent information
+    // Fetch talent information with timeout check
     let talent;
     try {
       const talentQuery = await databases.listDocuments(
@@ -167,12 +163,21 @@ export default async ({ req, res, log, error }) => {
       }
 
       talent = talentQuery.documents[0];
-      log(`Fetched talent: ${talent.fullname}`);
+      log(`Fetched talent: ${talent.fullname} (${Date.now() - startTime}ms)`);
     } catch (e) {
       return res.json({ success: false, error: 'Talent not found', statusCode: 404 }, 404);
     }
 
-    // Fetch career path
+    // Quick timeout check - abort if we're already past 3 seconds
+    if (Date.now() - startTime > 3000) {
+      return res.json({ 
+        success: false, 
+        error: 'Function timeout - database queries took too long', 
+        statusCode: 408 
+      }, 408);
+    }
+
+    // Fetch career path (with minimal timeout)
     let careerPath = null;
     if (talent.selectedPath) {
       try {
@@ -181,7 +186,7 @@ export default async ({ req, res, log, error }) => {
           config.careerPathsCollectionId,
           talent.selectedPath
         );
-        log(`Fetched career path: ${careerPath.title}`);
+        log(`Fetched career path: ${careerPath.title} (${Date.now() - startTime}ms)`);
       } catch (e) {
         log(`Warning: Could not fetch career path: ${e.message}`);
       }
@@ -189,24 +194,25 @@ export default async ({ req, res, log, error }) => {
 
     let questions;
     
-    // Initialize Gemini 2.5 Flash model with optimized configuration
+    // Initialize Gemini 2.5 Flash model with MAXIMUM performance settings
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash", // Updated to Gemini 2.5 Flash
+      model: "gemini-2.5-flash",
       generationConfig: { 
-        maxOutputTokens: 2500, // Reduced from 3000 for faster generation
-        temperature: 0.6, // Slightly reduced for more consistent output
-        topK: 32, // Added for better performance
-        topP: 0.9, // Added for better performance
-        candidateCount: 1 // Ensure single response
+        maxOutputTokens: 1500, // Reduced significantly for faster generation
+        temperature: 0.4, // Lower for more predictable output
+        topK: 20, // Reduced for faster processing
+        topP: 0.8, // Reduced for faster processing
+        candidateCount: 1,
+        stopSequences: ["\n\n\n"] // Help stop generation early
       }
     });
 
     try {
       const prompt = getCategoryPrompt(category, talent, careerPath);
-      log(`Starting AI generation for ${QUESTION_CATEGORIES[category]} questions`);
+      log(`Starting AI generation for ${QUESTION_CATEGORIES[category]} questions (${Date.now() - startTime}ms)`);
       
-      // Use timeout wrapper to prevent function timeout
-      const result = await generateWithTimeout(model, prompt, 25000); // 25 second timeout
+      // Critical: Only 12 seconds for AI generation (function has ~15s total)
+      const result = await generateWithTimeout(model, prompt, 12000);
       const responseText = result.response.text();
       
       log(`AI generation completed in ${Date.now() - startTime}ms`);
@@ -269,7 +275,7 @@ export default async ({ req, res, log, error }) => {
         } : null,
         generatedAt: new Date().toISOString(),
         executionTime: Date.now() - startTime,
-        usedFallback: false // New field to track model usage
+        usedFallback: false
       }
     };
 
