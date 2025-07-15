@@ -188,8 +188,8 @@ async function generateQuestionsWithRetry(model, prompt, maxRetries = 3) {
       
       if (attempt === maxRetries) break;
       
-      // Exponential backoff
-      const waitTime = Math.pow(2, attempt) * 1000;
+      // Exponential backoff with longer delays for free tier
+      const waitTime = Math.pow(2, attempt) * 2000; // Increased wait time
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
   }
@@ -258,38 +258,38 @@ export default async ({ req, res, log, error }) => {
       }
     }
 
-    // Initialize Gemini model - using 1.5 Pro for better quality
+    // Initialize Gemini model - using 2.0 Flash for free tier
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-pro-latest",
+      model: "gemini-2.0-flash-exp",
       generationConfig: { 
-        maxOutputTokens: 4000,
-        temperature: 0.7, // Slightly higher for more creative questions
-        topK: 50,
-        topP: 0.95,
+        maxOutputTokens: 3000, // Reduced for free tier
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.9,
         candidateCount: 1
       },
       safetySettings: [
         {
           category: "HARM_CATEGORY_HARASSMENT",
-          threshold: "BLOCK_NONE"
+          threshold: "BLOCK_MEDIUM_AND_ABOVE"
         },
         {
           category: "HARM_CATEGORY_HATE_SPEECH",
-          threshold: "BLOCK_NONE"
+          threshold: "BLOCK_MEDIUM_AND_ABOVE"
         },
         {
           category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-          threshold: "BLOCK_NONE"
+          threshold: "BLOCK_MEDIUM_AND_ABOVE"
         },
         {
           category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-          threshold: "BLOCK_NONE"
+          threshold: "BLOCK_MEDIUM_AND_ABOVE"
         }
       ]
     });
 
     const prompt = getEnhancedPrompt(category, talent, careerPath);
-    log(`Starting AI generation for ${QUESTION_CATEGORIES[category]} questions`);
+    log(`Starting AI generation for ${QUESTION_CATEGORIES[category]} questions using Gemini 2.0 Flash`);
     
     // Generate with retry mechanism
     const questions = await generateQuestionsWithRetry(model, prompt);
@@ -313,7 +313,7 @@ export default async ({ req, res, log, error }) => {
         generatedAt: new Date().toISOString(),
         executionTime: Date.now() - startTime,
         usedFallback: false,
-        modelUsed: "gemini-1.5-pro-latest"
+        modelUsed: "gemini-2.0-flash-exp"
       }
     };
 
