@@ -125,72 +125,12 @@ function extractAndCleanJSON(text) {
     console.error('First 500 chars:', text.substring(0, 500));
     console.error('Last 500 chars:', text.substring(Math.max(0, text.length - 500)));
     
-    // Return a fallback response instead of throwing
-    return createFallbackQuestions();
+    // Re-throw the error instead of returning fallback
+    throw error;
   }
 }
 
-// Create fallback questions when AI parsing fails
-function createFallbackQuestions() {
-  console.log('Creating fallback questions due to JSON parsing failure');
-  
-  const fallbackQuestions = [
-    {
-      "question": "Tell me about yourself and your background.",
-      "answer": "Start with a brief overview of your professional background, highlighting key experiences and skills relevant to the role.",
-      "tips": ["Keep it concise (2-3 minutes)", "Focus on relevant experiences", "End with why you're interested in this role"]
-    },
-    {
-      "question": "What are your greatest strengths?",
-      "answer": "Choose 2-3 strengths that are directly relevant to the job and provide specific examples.",
-      "tips": ["Use concrete examples", "Connect to job requirements", "Avoid generic answers"]
-    },
-    {
-      "question": "Where do you see yourself in 5 years?",
-      "answer": "Show ambition while demonstrating commitment to growth within the company and field.",
-      "tips": ["Align with company growth", "Show realistic progression", "Demonstrate long-term thinking"]
-    },
-    {
-      "question": "Why are you interested in this role?",
-      "answer": "Connect your skills and interests to the specific role and company mission.",
-      "tips": ["Research the company", "Be specific about the role", "Show genuine enthusiasm"]
-    },
-    {
-      "question": "Describe a challenging situation you overcame.",
-      "answer": "Use the STAR method (Situation, Task, Action, Result) to structure your response.",
-      "tips": ["Choose a relevant example", "Focus on your actions", "Highlight the positive outcome"]
-    },
-    {
-      "question": "What motivates you in your work?",
-      "answer": "Share what drives you professionally and how it aligns with the role.",
-      "tips": ["Be authentic", "Connect to job duties", "Show passion for the field"]
-    },
-    {
-      "question": "How do you handle stress and pressure?",
-      "answer": "Provide concrete examples of stress management techniques you use.",
-      "tips": ["Give specific strategies", "Show you can perform under pressure", "Mention time management skills"]
-    },
-    {
-      "question": "What are your salary expectations?",
-      "answer": "Research market rates and provide a range based on your experience and the role.",
-      "tips": ["Research market rates", "Provide a reasonable range", "Be open to negotiation"]
-    },
-    {
-      "question": "Do you have any questions for us?",
-      "answer": "Always have thoughtful questions prepared about the role, team, and company.",
-      "tips": ["Ask about growth opportunities", "Inquire about team dynamics", "Show interest in company culture"]
-    },
-    {
-      "question": "Why should we hire you?",
-      "answer": "Summarize your key qualifications and how they make you the ideal candidate.",
-      "tips": ["Highlight unique value", "Reference specific requirements", "Show confidence without arrogance"]
-    }
-  ];
-  
-  return JSON.stringify(fallbackQuestions);
-}
-
-// Improved prompt with more specific formatting instructions
+// Improved prompt with more specific formatting instructions for sample answers
 function getCategoryPrompt(category, talent, careerPath) {
   const careerStageDescription = {
     'Pathfinder': 'entry-level professional starting their career',
@@ -235,12 +175,12 @@ Required JSON format:
 [
   {
     "question": "Your first question here?",
-    "answer": "Brief 2-3 sentence answer explaining how to approach this question.",
+    "answer": "Sample answer that ${talent.fullname} can use as an example response to this question. This should be a realistic, professional answer that demonstrates good interview practices and is tailored to their career stage and background.",
     "tips": ["Specific tip 1", "Specific tip 2", "Specific tip 3"]
   },
   {
     "question": "Your second question here?",
-    "answer": "Brief 2-3 sentence answer explaining how to approach this question.",
+    "answer": "Another sample answer that ${talent.fullname} can use as an example response. Make it authentic and relevant to their profile.",
     "tips": ["Specific tip 1", "Specific tip 2", "Specific tip 3"]
   }
 ]
@@ -248,8 +188,10 @@ Required JSON format:
 REQUIREMENTS:
 - Return EXACTLY 10 question objects
 - Each question must be relevant to ${QUESTION_CATEGORIES[category]}
-- Each answer must be 2-3 sentences maximum
-- Each tips array must contain exactly 3 actionable tips
+- Each answer must be a SAMPLE ANSWER that ${talent.fullname} can use as an example of how to respond to the question
+- Sample answers should be 3-5 sentences and sound natural and professional
+- Sample answers should be tailored to ${talent.fullname}'s career stage (${careerStageDescription})
+- Each tips array must contain exactly 3 actionable tips for answering the question
 - Questions should be appropriate for ${careerStageDescription} level
 - Use double quotes for all strings
 - No trailing commas
@@ -370,8 +312,8 @@ export default async ({ req, res, log, error }) => {
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.5-flash",
       generationConfig: { 
-        maxOutputTokens: 4000, // Increased for better JSON generation
-        temperature: 0.1, // Lower temperature for more consistent JSON
+        maxOutputTokens: 6000, // Increased for longer sample answers
+        temperature: 0.3, // Slightly higher for more natural sample answers
         topK: 20,
         topP: 0.8,
         candidateCount: 1
@@ -382,37 +324,18 @@ export default async ({ req, res, log, error }) => {
     log(`Generated prompt for ${QUESTION_CATEGORIES[category]} questions`);
     
     // Generate with retry mechanism
-    let responseText;
-    let usedFallback = false;
-    
-    try {
-      responseText = await generateWithRetry(model, prompt);
-      log(`AI generation completed in ${Date.now() - startTime}ms`);
-    } catch (aiError) {
-      error('AI generation failed completely:', aiError.message);
-      log('Using fallback questions due to AI failure');
-      responseText = createFallbackQuestions();
-      usedFallback = true;
-    }
+    const responseText = await generateWithRetry(model, prompt);
+    log(`AI generation completed in ${Date.now() - startTime}ms`);
     
     // Parse the JSON response
-    let parsedQuestions;
-    try {
-      const cleanedJson = extractAndCleanJSON(responseText);
-      parsedQuestions = JSON.parse(cleanedJson);
-      
-      if (!Array.isArray(parsedQuestions)) {
-        throw new Error('Response is not an array');
-      }
-      
-      log(`Successfully parsed ${parsedQuestions.length} questions`);
-    } catch (parseError) {
-      error('JSON parsing failed:', parseError.message);
-      log('Using fallback questions due to parsing failure');
-      const fallbackJson = createFallbackQuestions();
-      parsedQuestions = JSON.parse(fallbackJson);
-      usedFallback = true;
+    const cleanedJson = extractAndCleanJSON(responseText);
+    const parsedQuestions = JSON.parse(cleanedJson);
+    
+    if (!Array.isArray(parsedQuestions)) {
+      throw new Error('Response is not an array');
     }
+    
+    log(`Successfully parsed ${parsedQuestions.length} questions`);
     
     // Validate and format questions
     const questions = parsedQuestions.slice(0, 10).map((q, index) => {
@@ -438,15 +361,8 @@ export default async ({ req, res, log, error }) => {
     });
 
     // Ensure we have exactly 10 questions
-    while (questions.length < 10) {
-      const fallbackData = JSON.parse(createFallbackQuestions());
-      const additionalQuestion = fallbackData[questions.length % fallbackData.length];
-      questions.push({
-        id: questions.length + 1,
-        question: additionalQuestion.question,
-        answer: additionalQuestion.answer,
-        tips: additionalQuestion.tips
-      });
+    if (questions.length < 10) {
+      throw new Error(`Generated only ${questions.length} questions, expected 10`);
     }
 
     const response = {
@@ -466,56 +382,22 @@ export default async ({ req, res, log, error }) => {
           title: careerPath.title
         } : null,
         generatedAt: new Date().toISOString(),
-        executionTime: Date.now() - startTime,
-        usedFallback: usedFallback
+        executionTime: Date.now() - startTime
       }
     };
 
-    log(`Successfully generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms${usedFallback ? ' (using fallback)' : ''}`);
+    log(`Successfully generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms`);
     return res.json(response);
 
   } catch (err) {
     error(`Fatal error: ${err.message}`);
     error('Stack trace:', err.stack);
     
-    // Return fallback response even on fatal errors
-    try {
-      const fallbackQuestions = JSON.parse(createFallbackQuestions());
-      const fallbackResponse = {
-        success: true,
-        statusCode: 200,
-        questions: fallbackQuestions.slice(0, 10).map((q, index) => ({
-          id: index + 1,
-          question: q.question,
-          answer: q.answer,
-          tips: q.tips
-        })),
-        metadata: {
-          totalQuestions: 10,
-          category: QUESTION_CATEGORIES[requestData?.category] || 'General',
-          talent: {
-            id: 'unknown',
-            fullname: 'Unknown',
-            careerStage: 'Unknown'
-          },
-          careerPath: null,
-          generatedAt: new Date().toISOString(),
-          executionTime: Date.now() - startTime,
-          usedFallback: true
-        }
-      };
-      
-      log('Returning fallback response due to fatal error');
-      return res.json(fallbackResponse);
-      
-    } catch (fallbackError) {
-      error('Even fallback failed:', fallbackError.message);
-      return res.json({
-        success: false,
-        error: `Critical failure: ${err.message}`,
-        statusCode: 500,
-        executionTime: Date.now() - startTime
-      }, 500);
-    }
+    return res.json({
+      success: false,
+      error: `Failed to generate interview questions: ${err.message}`,
+      statusCode: 500,
+      executionTime: Date.now() - startTime
+    }, 500);
   }
 };
