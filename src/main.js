@@ -130,7 +130,7 @@ function extractAndCleanJSON(text) {
   }
 }
 
-// Improved prompt with more specific formatting instructions for sample answers
+// Optimized prompt with strict length constraints for faster generation
 function getCategoryPrompt(category, talent, careerPath) {
   const careerStageDescription = {
     'Pathfinder': 'entry-level professional starting their career',
@@ -140,9 +140,9 @@ function getCategoryPrompt(category, talent, careerPath) {
 
   const careerPathTitle = careerPath ? careerPath.title : 'their chosen field';
   
-  const skills = (talent.skills || []).slice(0, 5);
+  const skills = (talent.skills || []).slice(0, 3); // Reduced from 5 to 3
   const degrees = (talent.degrees || []).slice(0, 2);
-  const interests = (talent.interests || []).slice(0, 3);
+  const interests = (talent.interests || []).slice(0, 2); // Reduced from 3 to 2
 
   const talentContext = [
     skills.length > 0 ? `Skills: ${skills.join(', ')}` : '',
@@ -151,18 +151,23 @@ function getCategoryPrompt(category, talent, careerPath) {
   ].filter(Boolean).join('. ');
 
   const categoryPrompts = {
-    'personal': `Generate exactly 10 personal background questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on motivation, strengths, challenges.`,
-    'career': `Generate exactly 10 career goals questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on plans, ambitions, choices.`,
-    'company': `Generate exactly 10 company/role fit questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on why this company/role.`,
-    'technical': `Generate exactly 10 technical questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on relevant skills and knowledge.`,
-    'behavioral': `Generate exactly 10 STAR format behavioral questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on past experiences.`,
-    'problem-solving': `Generate exactly 10 problem-solving questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on approach to challenges.`,
-    'teamwork': `Generate exactly 10 teamwork questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on collaboration and communication.`
+    'personal': `Generate 10 concise personal background questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on motivation, strengths, challenges.`,
+    'career': `Generate 10 concise career goals questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on plans, ambitions, choices.`,
+    'company': `Generate 10 concise company/role fit questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on why this company/role.`,
+    'technical': `Generate 10 concise technical questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on relevant skills and knowledge.`,
+    'behavioral': `Generate 10 concise STAR format behavioral questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on past experiences.`,
+    'problem-solving': `Generate 10 concise problem-solving questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on approach to challenges.`,
+    'teamwork': `Generate 10 concise teamwork questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on collaboration and communication.`
   };
 
   return `${categoryPrompts[category]}
 
 ${talentContext ? `Profile: ${talentContext}` : ''}
+
+CRITICAL LENGTH CONSTRAINTS:
+- Questions: Maximum 15 words each
+- Sample answers: Maximum 40 words each (2-3 sentences)
+- Tips: Maximum 8 words per tip
 
 CRITICAL INSTRUCTIONS:
 1. You MUST return ONLY a valid JSON array
@@ -170,32 +175,26 @@ CRITICAL INSTRUCTIONS:
 3. NO markdown formatting or code blocks
 4. Use proper JSON syntax with double quotes only
 5. Return exactly 10 question objects
+6. Keep ALL content concise and impactful
 
 Required JSON format:
 [
   {
-    "question": "Your first question here?",
-    "answer": "Sample answer that ${talent.fullname} can use as an example response to this question. This should be a realistic, professional answer that demonstrates good interview practices and is tailored to their career stage and background.",
-    "tips": ["Specific tip 1", "Specific tip 2", "Specific tip 3"]
-  },
-  {
-    "question": "Your second question here?",
-    "answer": "Another sample answer that ${talent.fullname} can use as an example response. Make it authentic and relevant to their profile.",
-    "tips": ["Specific tip 1", "Specific tip 2", "Specific tip 3"]
+    "question": "Brief, direct question (max 15 words)?",
+    "answer": "Concise sample answer for ${talent.fullname} (max 40 words). Professional and relevant to their background.",
+    "tips": ["Tip 1 (max 8 words)", "Tip 2 (max 8 words)", "Tip 3 (max 8 words)"]
   }
 ]
 
 REQUIREMENTS:
 - Return EXACTLY 10 question objects
-- Each question must be relevant to ${QUESTION_CATEGORIES[category]}
-- Each answer must be a SAMPLE ANSWER that ${talent.fullname} can use as an example of how to respond to the question
-- Sample answers should be 3-5 sentences and sound natural and professional
-- Sample answers should be tailored to ${talent.fullname}'s career stage (${careerStageDescription})
-- Each tips array must contain exactly 3 actionable tips for answering the question
-- Questions should be appropriate for ${careerStageDescription} level
+- Each question: relevant to ${QUESTION_CATEGORIES[category]}, max 15 words
+- Each answer: sample response for ${talent.fullname}, max 40 words, tailored to ${careerStageDescription}
+- Each tips array: exactly 3 actionable tips, max 8 words each
+- Appropriate for ${careerStageDescription} level
 - Use double quotes for all strings
 - No trailing commas
-- Start response immediately with the opening bracket [`;
+- Start response immediately with [`;
 }
 
 // Enhanced retry mechanism with exponential backoff
@@ -308,20 +307,20 @@ export default async ({ req, res, log, error }) => {
       }
     }
 
-    // Initialize Gemini model with optimized settings
+    // Initialize Gemini model with optimized settings for speed
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.5-flash",
       generationConfig: { 
-        maxOutputTokens: 6000, // Increased for longer sample answers
-        temperature: 0.3, // Slightly higher for more natural sample answers
-        topK: 20,
-        topP: 0.8,
+        maxOutputTokens: 3000, // Reduced from 6000 for faster generation
+        temperature: 0.2, // Reduced for more consistent, concise outputs
+        topK: 15, // Reduced from 20
+        topP: 0.7, // Reduced from 0.8
         candidateCount: 1
       }
     });
 
     const prompt = getCategoryPrompt(category, talent, careerPath);
-    log(`Generated prompt for ${QUESTION_CATEGORIES[category]} questions`);
+    log(`Generated optimized prompt for ${QUESTION_CATEGORIES[category]} questions`);
     
     // Generate with retry mechanism
     const responseText = await generateWithRetry(model, prompt);
@@ -337,7 +336,7 @@ export default async ({ req, res, log, error }) => {
     
     log(`Successfully parsed ${parsedQuestions.length} questions`);
     
-    // Validate and format questions
+    // Validate and format questions with length checks
     const questions = parsedQuestions.slice(0, 10).map((q, index) => {
       // Validate question structure
       if (!q.question || typeof q.question !== 'string') {
@@ -352,11 +351,22 @@ export default async ({ req, res, log, error }) => {
         throw new Error(`Invalid question at index ${index}: missing or invalid tips array`);
       }
       
+      // Trim content to ensure length constraints
+      const question = q.question.trim();
+      const answer = q.answer.trim();
+      const tips = q.tips.slice(0, 3).map(tip => {
+        const trimmedTip = typeof tip === 'string' ? tip.trim() : String(tip).trim();
+        // Truncate tip if too long (rough word count check)
+        return trimmedTip.split(' ').length > 8 ? 
+          trimmedTip.split(' ').slice(0, 8).join(' ') + '...' : 
+          trimmedTip;
+      });
+      
       return {
         id: index + 1,
-        question: q.question.trim(),
-        answer: q.answer.trim(),
-        tips: q.tips.slice(0, 3).map(tip => typeof tip === 'string' ? tip.trim() : String(tip).trim())
+        question,
+        answer,
+        tips
       };
     });
 
