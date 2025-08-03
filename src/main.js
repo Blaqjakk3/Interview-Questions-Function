@@ -309,14 +309,7 @@ export default async ({ req, res, log, error }) => {
 
     // Initialize Gemini model with optimized settings for speed
     const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash",
-      generationConfig: { 
-        maxOutputTokens: 3000, // Reduced from 6000 for faster generation
-        temperature: 0.2, // Reduced for more consistent, concise outputs
-        topK: 15, // Reduced from 20
-        topP: 0.7, // Reduced from 0.8
-        candidateCount: 1
-      }
+      model: "gemini-2.0-flash",
     });
 
     const prompt = getCategoryPrompt(category, talent, careerPath);
