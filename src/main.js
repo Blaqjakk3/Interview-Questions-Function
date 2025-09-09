@@ -39,7 +39,7 @@ const config = {
   talentsCollectionId: 'talents',
 };
 
-// Question categories mapping
+// Mapping of valid question categories to their descriptions
 const QUESTION_CATEGORIES = {
   'personal': 'Personal Background & Motivations',
   'career': 'Career Goals & Aspirations',
@@ -53,9 +53,12 @@ const QUESTION_CATEGORIES = {
 // Extracts and cleans JSON from AI response, handling common formatting issues
 function extractAndCleanJSON(text) {
   try {
+    // Log the first 200 characters of the AI response for debugging
     console.log('Raw AI response:', text.substring(0, 200) + '...');
     let cleaned = text.trim();
+    // Remove markdown code block formatting if present
     cleaned = cleaned.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
+    // Try direct JSON parse first
     try {
       const parsed = JSON.parse(cleaned);
       if (Array.isArray(parsed)) {
@@ -65,12 +68,14 @@ function extractAndCleanJSON(text) {
     } catch (e) {
       console.log('Direct parse failed, attempting cleanup...');
     }
+    // Try to extract JSON array from the text
     const arrayStart = cleaned.indexOf('[');
     const arrayEnd = cleaned.lastIndexOf(']');
     if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
       cleaned = cleaned.substring(arrayStart, arrayEnd + 1);
       console.log('Extracted JSON array:', cleaned.substring(0, 100) + '...');
     } else {
+      // If no array, try to reconstruct from individual objects
       const objects = [];
       let currentPos = 0;
       while (currentPos < cleaned.length) {
@@ -101,6 +106,7 @@ function extractAndCleanJSON(text) {
         throw new Error('No valid JSON objects found in response');
       }
     }
+    // Additional cleaning for JSON formatting issues
     cleaned = cleaned
       .replace(/,(\s*[}\]])/g, '$1')
       .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":')
@@ -118,6 +124,7 @@ function extractAndCleanJSON(text) {
     console.log(`Successfully parsed ${parsed.length} questions`);
     return JSON.stringify(parsed);
   } catch (error) {
+    // Log detailed error info for debugging
     console.error('JSON extraction failed:', error.message);
     console.error('Problematic text length:', text.length);
     console.error('First 500 chars:', text.substring(0, 500));
@@ -128,23 +135,28 @@ function extractAndCleanJSON(text) {
 
 // Builds a strict prompt for the AI based on category, talent, and career path
 function getCategoryPrompt(category, talent, careerPath) {
+  // Map career stage to a readable description
   const careerStageDescription = {
     'Pathfinder': 'entry-level professional starting their career',
     'Trailblazer': 'mid-level professional advancing their career',
     'Horizon Changer': 'experienced professional transitioning careers'
   }[talent.careerStage] || 'professional';
 
+  // Use career path title if available
   const careerPathTitle = careerPath ? careerPath.title : 'their chosen field';
+  // Limit context fields for brevity
   const skills = (talent.skills || []).slice(0, 3);
   const degrees = (talent.degrees || []).slice(0, 2);
   const interests = (talent.interests || []).slice(0, 2);
 
+  // Build a profile context string
   const talentContext = [
     skills.length > 0 ? `Skills: ${skills.join(', ')}` : '',
     degrees.length > 0 ? `Education: ${degrees.join(', ')}` : '',
     interests.length > 0 ? `Interests: ${interests.join(', ')}` : ''
   ].filter(Boolean).join('. ');
 
+  // Category-specific prompt templates
   const categoryPrompts = {
     'personal': `Generate 10 concise personal background questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on motivation, strengths, challenges.`,
     'career': `Generate 10 concise career goals questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on plans, ambitions, choices.`,
@@ -155,6 +167,7 @@ function getCategoryPrompt(category, talent, careerPath) {
     'teamwork': `Generate 10 concise teamwork questions for ${talent.fullname}, ${careerStageDescription} in ${careerPathTitle}. Focus on collaboration and communication.`
   };
 
+  // Return the full prompt with strict instructions
   return `${categoryPrompts[category]}
 
 ${talentContext ? `Profile: ${talentContext}` : ''}
@@ -197,6 +210,7 @@ async function generateWithRetry(model, prompt, maxRetries = 3) {
   let lastError = null;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      // Attempt to generate content from the AI model
       console.log(`AI generation attempt ${attempt} of ${maxRetries}`);
       const result = await model.generateContent(prompt);
       if (!result || !result.response) {
@@ -215,6 +229,7 @@ async function generateWithRetry(model, prompt, maxRetries = 3) {
         console.error('All AI generation attempts failed');
         break;
       }
+      // Exponential backoff with jitter before retrying
       const baseWaitTime = Math.pow(2, attempt) * 1000;
       const jitter = Math.random() * 1000;
       const waitTime = baseWaitTime + jitter;
@@ -231,6 +246,7 @@ export default async ({ req, res, log, error }) => {
   try {
     log('=== Interview Questions Function Started ===');
     let requestData;
+    // Parse and validate incoming JSON request
     try {
       requestData = JSON.parse(req.body);
     } catch (e) {
@@ -250,7 +266,7 @@ export default async ({ req, res, log, error }) => {
       }, 400);
     }
     log(`Processing request for talentId: ${talentId}, category: ${category}`);
-    // Fetch talent info
+    // Fetch talent info from Appwrite database
     let talent;
     try {
       const talentQuery = await databases.listDocuments(
@@ -268,7 +284,7 @@ export default async ({ req, res, log, error }) => {
       error('Database error fetching talent:', e.message);
       return res.json({ success: false, error: 'Database error: Could not fetch talent', statusCode: 500 }, 500);
     }
-    // Fetch career path info
+    // Fetch career path info if available
     let careerPath = null;
     if (talent.selectedPath) {
       try {
@@ -286,19 +302,20 @@ export default async ({ req, res, log, error }) => {
     const model = genAI.getGenerativeModel({ 
       model: "gemini-2.0-flash",
     });
+    // Build the AI prompt
     const prompt = getCategoryPrompt(category, talent, careerPath);
     log(`Generated optimized prompt for ${QUESTION_CATEGORIES[category]} questions`);
-    // Generate with retry
+    // Generate questions with retry logic
     const responseText = await generateWithRetry(model, prompt);
     log(`AI generation completed in ${Date.now() - startTime}ms`);
-    // Parse JSON response
+    // Parse and clean the AI's JSON response
     const cleanedJson = extractAndCleanJSON(responseText);
     const parsedQuestions = JSON.parse(cleanedJson);
     if (!Array.isArray(parsedQuestions)) {
       throw new Error('Response is not an array');
     }
     log(`Successfully parsed ${parsedQuestions.length} questions`);
-    // Validate and format questions
+    // Validate and format questions, enforce structure and length
     const questions = parsedQuestions.slice(0, 10).map((q, index) => {
       if (!q.question || typeof q.question !== 'string') {
         throw new Error(`Invalid question at index ${index}: missing or invalid question field`);
@@ -311,6 +328,7 @@ export default async ({ req, res, log, error }) => {
       }
       const question = q.question.trim();
       const answer = q.answer.trim();
+      // Limit tips to 3 and trim each tip to 8 words max
       const tips = q.tips.slice(0, 3).map(tip => {
         const trimmedTip = typeof tip === 'string' ? tip.trim() : String(tip).trim();
         return trimmedTip.split(' ').length > 8 ? 
@@ -327,6 +345,7 @@ export default async ({ req, res, log, error }) => {
     if (questions.length < 10) {
       throw new Error(`Generated only ${questions.length} questions, expected 10`);
     }
+    // Build the final response object
     const response = {
       success: true,
       statusCode: 200,
@@ -350,6 +369,7 @@ export default async ({ req, res, log, error }) => {
     log(`Successfully generated ${questions.length} ${QUESTION_CATEGORIES[category]} questions in ${Date.now() - startTime}ms`);
     return res.json(response);
   } catch (err) {
+    // Handle and log any fatal errors
     error(`Fatal error: ${err.message}`);
     error('Stack trace:', err.stack);
     return res.json({
